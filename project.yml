@@ -1,0 +1,190 @@
+# XcodeGen manifest. `make project` regenerates Cling.xcodeproj from this.
+# Keep the manifest as the source of truth — never edit the generated .xcodeproj
+# by hand or the next `make project` will clobber it.
+#
+# Cling pins anything to the Dynamic Island / lock screen as a Live Activity.
+# It ships as three targets plus shared code:
+#
+#   Cling          — the container app (App Store product). Pin list, quick-add,
+#                    appearance customization, App Intents, activity lifecycle.
+#   ClingWidgets   — the WidgetKit extension hosting the Live Activity
+#                    (Dynamic Island + lock screen presentations).
+#   ClingShare     — the share extension: pin text/URLs/images from any app's
+#                    share sheet (saves a pending pin; only the app can start
+#                    the Live Activity — an iOS platform rule).
+#   Sources/ClingKit — shared models + App Group storage + pin-type modules,
+#                    compiled into ALL THREE targets (no dynamic framework,
+#                    so no extension rpath/embedding pitfalls).
+#
+# The processes are isolated; they share state only through the
+# App Group `group.ltd.anti.cling`.
+
+name: Cling
+options:
+  bundleIdPrefix: ltd.anti
+  # 17.2, not 17.0 like Clink: LiveActivityIntent (start a Live Activity from a
+  # Shortcut/Action Button without foregrounding the app) and push-to-start
+  # tokens both require 17.2.
+  deploymentTarget:
+    iOS: "17.2"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    # Same Apple Developer team as the rest of our apps. Override at build time
+    # with `DEVELOPMENT_TEAM=<id>` if a fork needs a different team.
+    DEVELOPMENT_TEAM: 8248296AJX
+    CODE_SIGN_STYLE: Automatic
+    IPHONEOS_DEPLOYMENT_TARGET: "17.2"
+    SWIFT_STRICT_CONCURRENCY: complete
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+
+# Local SwiftPM dependency on the iOS UX library. iUX-ios lives one level up.
+packages:
+  iUX-ios:
+    path: ../iUX-ios
+
+targets:
+  # ----------------------------------------------------------------
+  # Container app — the App Store product.
+  # ----------------------------------------------------------------
+  Cling:
+    type: application
+    platform: iOS
+    sources:
+      - Sources/Cling
+      # Shared code compiled directly into the app.
+      - Sources/ClingKit
+      # Asset catalog must be a source (not a plain resource) so Xcode runs
+      # actool over it and produces Assets.car in the bundle.
+      - Resources/Assets.xcassets
+      # Privacy manifest (required by App Store since May 2024). Lives in a
+      # per-target folder so it lands at the bundle root as PrivacyInfo.xcprivacy.
+      - Resources/Privacy/App/PrivacyInfo.xcprivacy
+    info:
+      path: Resources/Cling-Info.plist
+      properties:
+        CFBundleDisplayName: Cling
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        # Export compliance: Cling runs fully offline and implements no
+        # encryption of its own. Auto-clears ASC's "Missing Compliance" prompt.
+        ITSAppUsesNonExemptEncryption: false
+        # Live Activities are the entire product. Goes in the APP plist;
+        # the widget extension needs no Live Activity key.
+        # FrequentUpdates is deliberately omitted: countdowns render
+        # client-side via Text(timerInterval:) and need no update stream.
+        NSSupportsLiveActivities: true
+        # One-shot fix for the parking pin; never tracks continuously.
+        NSLocationWhenInUseUsageDescription: >-
+          Cling uses your location once to remember where you parked.
+        # Optional photo on a parking pin.
+        NSCameraUsageDescription: >-
+          Cling can attach a photo of your parking spot to the pin.
+        NSPhotoLibraryUsageDescription: >-
+          Cling can attach a photo from your library to a pin.
+        # Deep links: cling://pin/<uuid>, cling://activate/<uuid>. Used by
+        # Live Activity taps, renewal notifications, and the share extension.
+        CFBundleURLTypes:
+          - CFBundleURLName: ltd.anti.cling
+            CFBundleURLSchemes:
+              - cling
+        UILaunchScreen:
+          UIColorName: ""
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+    entitlements:
+      path: Resources/Cling.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.ltd.anti.cling
+    dependencies:
+      - package: iUX-ios
+        product: iUXiOS
+      # Embeds the extensions into the app bundle's PlugIns dir.
+      - target: ClingWidgets
+      - target: ClingShare
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ltd.anti.cling
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+
+  # ----------------------------------------------------------------
+  # Widget extension — hosts the Live Activity (Dynamic Island + lock screen).
+  # ----------------------------------------------------------------
+  ClingWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Sources/ClingWidgets
+      # Same shared code, compiled into the extension too.
+      - Sources/ClingKit
+      - Resources/Privacy/Widgets/PrivacyInfo.xcprivacy
+    info:
+      path: Resources/ClingWidgets-Info.plist
+      properties:
+        CFBundleDisplayName: Cling
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: Resources/ClingWidgets.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.ltd.anti.cling
+    dependencies:
+      - package: iUX-ios
+        product: iUXiOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ltd.anti.cling.widgets
+        TARGETED_DEVICE_FAMILY: "1,2"
+
+  # ----------------------------------------------------------------
+  # Share extension — pin from any app's share sheet.
+  # ----------------------------------------------------------------
+  ClingShare:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Sources/ClingShare
+      - Sources/ClingKit
+      - Resources/Privacy/Share/PrivacyInfo.xcprivacy
+    info:
+      path: Resources/ClingShare-Info.plist
+      properties:
+        CFBundleDisplayName: Cling
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          # Marked @objc(ShareViewController) so the bare name resolves.
+          NSExtensionPrincipalClass: ShareViewController
+          NSExtensionAttributes:
+            # Dictionary activation rule (never TRUEPREDICATE — ASC rejection).
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsText: true
+              NSExtensionActivationSupportsWebURLWithMaxCount: 1
+              NSExtensionActivationSupportsImageWithMaxCount: 1
+    entitlements:
+      path: Resources/ClingShare.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.ltd.anti.cling
+    dependencies:
+      - package: iUX-ios
+        product: iUXiOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ltd.anti.cling.share
+        TARGETED_DEVICE_FAMILY: "1,2"
