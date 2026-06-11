@@ -11,4 +11,8 @@ public enum ClingKit {
 
     /// Deep link scheme: cling://pin/<uuid>, cling://activate/<uuid>.
     public static let urlScheme = "cling"
+
+    /// WidgetKit `kind` for the home-screen widget. Shared so the app can
+    /// reload its timelines by the exact string the widget registers.
+    public static let homeWidgetKind = "ClingHomeWidget"
 }

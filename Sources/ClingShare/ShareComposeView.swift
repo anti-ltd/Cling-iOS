@@ -6,6 +6,7 @@
  */
 import SwiftUI
 import UserNotifications
+import WidgetKit
 import iUXiOS
 
 struct ShareComposeView: View {
@@ -179,6 +180,9 @@ struct ShareComposeView: View {
             appearance: settings.defaultAppearance(for: payload.typeID),
             status: .pending)
         store.upsert(pin)  // posts the Darwin notification — a running app sweeps immediately
+        // Surface the new pin on the home-screen widget right away, even if the
+        // app never comes forward (it'll show as pending until activated).
+        WidgetCenter.shared.reloadTimelines(ofKind: ClingKit.homeWidgetKind)
 
         scheduleHandOffNotification(for: pin)
         withAnimation(UX.Motion.morph) { saved = true }

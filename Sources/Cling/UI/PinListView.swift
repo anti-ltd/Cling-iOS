@@ -38,6 +38,7 @@ struct PinListView: View {
                     )
                     .padding(.top, 40)
                 } else {
+                    summary(for: pins)
                     ForEach(pins) { pin in
                         PinRow(pin: pin)
                     }
@@ -49,15 +50,41 @@ struct PinListView: View {
         .scrollDismissesKeyboard(.interactively)
         .animation(UX.Motion.morph, value: pins.map(\.id))
     }
+
+    /// A one-line read on the board: how many are pinned, and whether any need
+    /// attention. Small, secondary — the cards are the content.
+    @ViewBuilder private func summary(for pins: [Pin]) -> some View {
+        let expired = pins.filter { $0.status == .stale }.count
+        HStack(spacing: 6) {
+            Text("\(pins.count) pinned")
+                .foregroundStyle(.secondary)
+            if expired > 0 {
+                Text("·").foregroundStyle(.tertiary)
+                Label(expired == 1 ? "1 needs renewing" : "\(expired) need renewing",
+                      systemImage: "clock.badge.exclamationmark")
+                    .foregroundStyle(.orange)
+            }
+            Spacer(minLength: 0)
+        }
+        .font(.footnote.weight(.medium))
+        .padding(.horizontal, 4)
+        .padding(.bottom, 2)
+    }
 }
 
 private struct PinRow: View {
     @Environment(AppModel.self) private var model
     let pin: Pin
 
+    /// Expired pins should grab you — they're warm and want renewing. Live and
+    /// pending pins wear their own accent, calm.
+    private var tileTint: Color {
+        pin.status == .stale ? .orange : pin.appearance.accent.color
+    }
+
     var body: some View {
         NavigationLink(value: pin.id) {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
                 PinRegistry.module(for: pin.typeID).listRow(pin)
                     .fontDesign(pin.appearance.fontDesign.design)
                 HStack(spacing: 6) {
@@ -72,11 +99,23 @@ private struct PinRow: View {
                     }
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
+            .padding(.leading, 18)
+            .padding(.trailing, 14)
+            .padding(.vertical, 14)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(RoundedRectangle(cornerRadius: UX.Glass.tileRadius, style: .continuous))
-            .glassTile(tint: pin.appearance.accent.color)
+            .glassTile(tint: tileTint)
+            // A leading accent rib — the "pinned tab" tell. As an overlay it
+            // resolves to the card's full height automatically.
+            .overlay(alignment: .leading) {
+                Capsule()
+                    .fill(pin.status == .stale
+                          ? AnyShapeStyle(Color.orange)
+                          : AnyShapeStyle(pin.appearance.accentGradient))
+                    .frame(width: 4)
+                    .padding(.vertical, 14)
+                    .padding(.leading, 7)
+            }
         }
         .buttonStyle(.glassBloom)
         .contextMenu {

@@ -47,12 +47,12 @@ struct PinPreviewCard: View {
 
     var body: some View {
         let module = PinRegistry.module(for: typeID)
-        VStack(spacing: 12) {
-            module.lockScreen(context)
-                .padding(.horizontal, 14)
-                .padding(.vertical, appearance.density == .compact ? 10 : 14)
-                .background(previewSurface)
+        VStack(spacing: 14) {
+            // The pin on its lock-screen stage — the real renderer, the real
+            // surface. Tuning the controls below morphs this live.
+            LockScreenStage(typeID: typeID, payload: payload, appearance: appearance)
 
+            // And the compact Dynamic Island, as iOS composes it.
             HStack(spacing: 8) {
                 module.diCompactLeading(context)
                 Capsule()
@@ -64,26 +64,10 @@ struct PinPreviewCard: View {
             .padding(.vertical, 8)
             .background(Capsule().fill(.black))
             .environment(\.colorScheme, .dark)
+            .fontDesign(appearance.fontDesign.design)
         }
         .frame(maxWidth: .infinity)
-        .fontDesign(appearance.fontDesign.design)
         .animation(UX.Motion.morph, value: appearance)
-    }
-
-    /// Approximates the activity background tint the lock screen applies.
-    @ViewBuilder private var previewSurface: some View {
-        let rr = RoundedRectangle(cornerRadius: UX.Glass.tileRadius, style: .continuous)
-        switch appearance.style {
-        case .glass:
-            rr.fill(.ultraThinMaterial)
-                .overlay(rr.fill(appearance.accent.color.opacity(0.18)))
-        case .solid:
-            rr.fill(.ultraThinMaterial)
-                .overlay(rr.fill(appearance.accent.color.opacity(0.55)))
-        case .outline:
-            rr.fill(.ultraThinMaterial)
-                .overlay(rr.strokeBorder(appearance.accent.color.opacity(0.5), lineWidth: 1))
-        }
     }
 }
 
@@ -138,27 +122,46 @@ struct AppearanceControls: View {
         custom: Binding<Color>,
         choose: @escaping (RGBA) -> Void
     ) -> some View {
+        // Presets scroll horizontally so they never crowd the custom-colour
+        // picker off the card's edge — the picker stays pinned and visible.
         HStack(spacing: 12) {
-            ForEach(PinAppearance.accentPresets, id: \.self) { swatch in
-                Button {
-                    withAnimation(UX.Motion.morph) { choose(swatch) }
-                } label: {
-                    Circle()
-                        .fill(swatch.color)
-                        .frame(width: 34, height: 34)
-                        .overlay {
-                            if selected == swatch {
-                                Circle().strokeBorder(.white, lineWidth: 2)
-                                    .padding(2)
-                            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    ForEach(PinAppearance.accentPresets, id: \.self) { swatch in
+                        Button {
+                            withAnimation(UX.Motion.morph) { choose(swatch) }
+                        } label: {
+                            swatchDot(swatch.color, selected: selected == swatch)
                         }
+                        .buttonStyle(.glassBloom)
+                    }
                 }
-                .buttonStyle(.glassBloom)
+                .padding(.vertical, 3)
+                .padding(.horizontal, 2)
             }
-            Spacer(minLength: 0)
             ColorPicker("", selection: custom, supportsOpacity: false)
                 .labelsHidden()
+                .frame(width: 40)
         }
+    }
+
+    /// A colour disc with a clear selected state — a white ring and an inset
+    /// check, so the active accent reads at a glance.
+    private func swatchDot(_ color: Color, selected: Bool) -> some View {
+        Circle()
+            .fill(color)
+            .frame(width: 38, height: 38)
+            .overlay(Circle().strokeBorder(.white.opacity(0.25), lineWidth: 1))
+            .overlay {
+                if selected {
+                    Circle().strokeBorder(.white, lineWidth: 2.5)
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.3), radius: 1, y: 1)
+                }
+            }
+            .shadow(color: selected ? color.opacity(0.5) : .clear, radius: 6)
     }
 
     private var gradientEnabled: Binding<Bool> {

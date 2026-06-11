@@ -9,6 +9,7 @@
  */
 import SwiftUI
 import UserNotifications
+import WidgetKit
 
 @MainActor
 @Observable
@@ -185,9 +186,12 @@ final class AppModel {
     }
 
     /// Write to the shared store without notifying — these are self-originated
-    /// changes and our own state is already current.
+    /// changes and our own state is already current. The home-screen widget,
+    /// being a separate process, can't observe our in-memory state, so nudge
+    /// WidgetCenter to re-read the store it shares with us.
     private func persist() {
         store.savePins(pins, notify: false)
+        WidgetCenter.shared.reloadTimelines(ofKind: ClingKit.homeWidgetKind)
     }
 
     /// The user-meaningful end a payload implies (a timer's zero moment).
