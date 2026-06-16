@@ -114,7 +114,18 @@ public enum ParkingPinModule: PinModule {
     }
 
     public static func diCompactTrailing(_ ctx: PinRenderContext) -> AnyView {
-        AnyView(
+        // If they told us where they parked, show that instead of a bare "P".
+        let note = payload(ctx.payload)?.note?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let note, !note.isEmpty {
+            return AnyView(
+                Text(note)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(ctx.accent)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            )
+        }
+        return AnyView(
             Image(systemName: "parkingsign")
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(ctx.accent)

@@ -35,6 +35,8 @@ struct RootView: View {
                         SettingsView()
                     } label: {
                         Image(systemName: "gearshape")
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.glassBloom)
                 }
@@ -44,6 +46,8 @@ struct RootView: View {
                     } label: {
                         Image(systemName: "plus")
                             .font(.body.weight(.semibold))
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.glassBloom)
                 }
