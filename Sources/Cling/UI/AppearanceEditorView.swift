@@ -20,11 +20,16 @@ struct AppearanceEditor: View {
     /// The payload driving the preview — the pin's own, or a sample.
     let previewPayload: PinPayload
     @Binding var appearance: PinAppearance
+    /// The house style overlaid on the preview, so this screen shows the pin
+    /// exactly as it'll render (surface/type/density/border come from here, not
+    /// from the per-type fields being edited below).
+    var globalStyle: GlobalPinStyle = .default
 
     var body: some View {
         VStack(spacing: UX.cardSpacing) {
             CardSection("Preview") {
-                PinPreviewCard(typeID: typeID, payload: previewPayload, appearance: appearance)
+                PinPreviewCard(typeID: typeID, payload: previewPayload,
+                               appearance: appearance, globalStyle: globalStyle)
                     .padding(.vertical, UX.rowVPadding)
             }
             AppearanceControls(typeID: typeID, appearance: $appearance)
@@ -40,9 +45,16 @@ struct PinPreviewCard: View {
     let typeID: PinTypeID
     let payload: PinPayload
     let appearance: PinAppearance
+    /// The house style to dress the preview in. Defaults to the shipped style
+    /// so callers without settings still render something sane.
+    var globalStyle: GlobalPinStyle = .default
+
+    /// What the pin actually renders with: the per-type accent + glyph being
+    /// edited, dressed in the global house style.
+    private var effective: PinAppearance { globalStyle.apply(to: appearance) }
 
     private var context: PinRenderContext {
-        PinRenderContext(pinID: UUID(), payload: payload, appearance: appearance)
+        PinRenderContext(pinID: UUID(), payload: payload, appearance: effective)
     }
 
     var body: some View {
@@ -50,7 +62,7 @@ struct PinPreviewCard: View {
         VStack(spacing: 14) {
             // The pin on its lock-screen stage — the real renderer, the real
             // surface. Tuning the controls below morphs this live.
-            LockScreenStage(typeID: typeID, payload: payload, appearance: appearance)
+            LockScreenStage(typeID: typeID, payload: payload, appearance: effective)
 
             // And the compact Dynamic Island, as iOS composes it.
             HStack(spacing: 8) {
@@ -64,10 +76,10 @@ struct PinPreviewCard: View {
             .padding(.vertical, 8)
             .background(Capsule().fill(.black))
             .environment(\.colorScheme, .dark)
-            .fontDesign(appearance.fontDesign.design)
+            .fontDesign(effective.fontDesign.design)
         }
         .frame(maxWidth: .infinity)
-        .animation(UX.Motion.morph, value: appearance)
+        .animation(UX.Motion.morph, value: effective)
     }
 }
 
@@ -234,27 +246,6 @@ struct AppearanceControls: View {
     private var layoutSection: some View {
         CardSection("Layout") {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Density")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                OptionChips(
-                    options: [("Compact", LayoutDensity.compact), ("Regular", .regular)],
-                    selection: $appearance.density)
-                Text("Surface")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                OptionChips(
-                    options: [("Glass", PinStyle.glass), ("Solid", .solid), ("Outline", .outline)],
-                    selection: $appearance.style)
-                Text("Type")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                OptionChips(
-                    options: [
-                        ("Standard", PinFontDesign.standard), ("Rounded", .rounded),
-                        ("Serif", .serif), ("Mono", .mono),
-                    ],
-                    selection: $appearance.fontDesign)
                 Toggle(isOn: $appearance.showsExpiry) {
                     VStack(alignment: .leading, spacing: 1) {
                         Text("Show expiry time")
@@ -264,7 +255,13 @@ struct AppearanceControls: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .padding(.top, 4)
+                // Surface, type, density and border are shared by every pin —
+                // set once in Settings → Dynamic Island style.
+                Label("Surface, type, density & border are set globally in Settings → Dynamic Island style.",
+                      systemImage: "wand.and.stars")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 4)
             }
             .padding(.vertical, UX.rowVPadding)
         }
@@ -288,7 +285,8 @@ struct PinAppearanceEditorView: View {
             AppearanceEditor(
                 typeID: pin.typeID,
                 previewPayload: pin.payload,
-                appearance: $appearance)
+                appearance: $appearance,
+                globalStyle: model.settings.globalStyle)
                 .padding(UX.screenPadding)
         }
         .background {
@@ -317,8 +315,8 @@ enum SamplePayloads {
             .timer(TimerPayload(label: "Pasta", startDate: .now, endDate: .now.addingTimeInterval(12 * 60)))
         case .parking:
             .parking(ParkingPayload(latitude: 0, longitude: 0, note: "Level 3, row F"))
-        case .clipboard:
-            .clipboard(ClipboardPayload(text: "482 916"))
+        case .decor:
+            .decor(DecorPayload(label: "On air"))
         }
     }
 }

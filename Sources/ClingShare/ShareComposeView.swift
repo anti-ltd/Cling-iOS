@@ -1,8 +1,8 @@
 /**
- The share-sheet composer. Shows what arrived, lets the user pick note vs.
- clipboard for text, add a caption to an image, and saves a *pending* pin —
- with the iOS rule ("only the app itself can place pins in the Dynamic
- Island") said plainly, plus an immediate local notification as the hand-off.
+ The share-sheet composer. Shows what arrived, lets the user add a caption to
+ an image or edit the shared text, and saves a *pending* note pin — with the
+ iOS rule ("only the app itself can place pins in the Dynamic Island") said
+ plainly, plus an immediate local notification as the hand-off.
  */
 import SwiftUI
 import UserNotifications
@@ -15,7 +15,6 @@ struct ShareComposeView: View {
     let onCancel: () -> Void
 
     @State private var content: SharedContent?
-    @State private var typeID: PinTypeID = .clipboard
     @State private var caption = ""
     @State private var saved = false
 
@@ -49,9 +48,6 @@ struct ShareComposeView: View {
         .task {
             let extracted = await extractor()
             content = extracted
-            // Text from a page share reads as "keep this handy" → clipboard;
-            // an image is a note with a photo.
-            typeID = extracted.imageData != nil ? .note : .clipboard
             if let text = extracted.text { caption = text }
         }
     }
@@ -60,22 +56,6 @@ struct ShareComposeView: View {
 
     @ViewBuilder private func composer(_ content: SharedContent) -> some View {
         VStack(spacing: UX.cardSpacing) {
-            if content.imageData == nil {
-                // Text/URL shares can be a clipboard pin or a note.
-                HStack(spacing: 8) {
-                    ForEach([PinTypeID.clipboard, .note], id: \.self) { candidate in
-                        Chip(
-                            candidate == .clipboard ? "Clipboard" : "Note",
-                            systemImage: candidate == .clipboard ? "doc.on.clipboard" : "note.text",
-                            isSelected: typeID == candidate
-                        ) {
-                            withAnimation(UX.Motion.morph) { typeID = candidate }
-                        }
-                    }
-                    Spacer(minLength: 0)
-                }
-            }
-
             CardSection {
                 if let imageData = content.imageData, let image = UIImage(data: imageData) {
                     HStack {
@@ -168,12 +148,8 @@ struct ShareComposeView: View {
         }
 
         let text = caption.trimmingCharacters(in: .whitespacesAndNewlines)
-        let payload: PinPayload =
-            if photoFilename != nil || typeID == .note {
-                .note(NotePayload(text: text, photoFilename: photoFilename))
-            } else {
-                .clipboard(ClipboardPayload(text: text, sourceURL: content.url))
-            }
+        let payload: PinPayload = .note(NotePayload(
+            text: text, photoFilename: photoFilename, sourceURL: content.url))
 
         let pin = Pin(
             payload: payload,

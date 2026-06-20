@@ -71,8 +71,8 @@ final class RenewalScheduler {
         switch pin.payload {
         case .parking: "Your parking pin is about to leave the Dynamic Island. Tap to keep it alive."
         case .note:    "Your note is about to leave the Dynamic Island. Tap to keep it alive."
-        case .clipboard: "Your clipboard pin is about to expire. Tap to keep it alive."
         case .timer:   "Your timer outlives the 8-hour pin limit. Tap to keep it counting."
+        case .decor:   "Your decoration is about to leave the Dynamic Island. Tap to keep it up."
         }
     }
 

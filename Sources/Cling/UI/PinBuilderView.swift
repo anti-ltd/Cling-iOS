@@ -40,7 +40,8 @@ struct PinBuilderView: View {
                 PinPreviewCard(
                     typeID: draft.typeID,
                     payload: payload ?? SamplePayloads.payload(for: draft.typeID),
-                    appearance: appearance)
+                    appearance: appearance,
+                    globalStyle: model.settings.globalStyle)
 
                 presetRow
 

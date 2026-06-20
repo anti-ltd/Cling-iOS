@@ -42,10 +42,12 @@ public struct PinRenderContext: Sendable {
 /// losing what's already typed.
 public struct PinDraft: Sendable, Equatable {
     public var typeID: PinTypeID
-    /// Note / clipboard text.
+    /// Note text.
     public var text: String
     /// Timer label.
     public var label: String
+    /// How the timer's countdown draws — see `CountdownStyle`.
+    public var countdownStyle: CountdownStyle
     /// Parking headline override ("Parked here" when empty).
     public var title: String
     public var duration: TimeInterval
@@ -54,16 +56,20 @@ public struct PinDraft: Sendable, Equatable {
     public var latitude: Double?
     public var longitude: Double?
     public var photoFilename: String?
-    /// Clipboard provenance, when shared from a web page.
+    /// Note provenance, when shared from a web page.
     public var sourceURL: URL?
+    /// Optional caption for a decorative pin.
+    public var decorLabel: String
 
     public init(typeID: PinTypeID = .note) {
         self.typeID = typeID
         self.text = ""
         self.label = ""
+        self.countdownStyle = .text
         self.title = ""
         self.duration = 15 * 60
         self.parkingNote = ""
+        self.decorLabel = ""
     }
 
     /// The payload this draft describes, or nil while it's incomplete.
@@ -72,13 +78,14 @@ public struct PinDraft: Sendable, Equatable {
         case .note:
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty || photoFilename != nil else { return nil }
-            return .note(NotePayload(text: trimmed, photoFilename: photoFilename))
+            return .note(NotePayload(text: trimmed, photoFilename: photoFilename, sourceURL: sourceURL))
         case .timer:
             guard duration > 0 else { return nil }
             return .timer(TimerPayload(
                 label: label.trimmingCharacters(in: .whitespacesAndNewlines),
                 startDate: now,
-                endDate: now.addingTimeInterval(duration)))
+                endDate: now.addingTimeInterval(duration),
+                style: countdownStyle))
         case .parking:
             guard let latitude, let longitude else { return nil }
             let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -88,10 +95,10 @@ public struct PinDraft: Sendable, Equatable {
                 title: title.isEmpty ? nil : title,
                 note: note.isEmpty ? nil : note,
                 photoFilename: photoFilename))
-        case .clipboard:
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return nil }
-            return .clipboard(ClipboardPayload(text: trimmed, sourceURL: sourceURL))
+        case .decor:
+            // Always valid — a decoration needs no content, just a glyph.
+            let caption = decorLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+            return .decor(DecorPayload(label: caption.isEmpty ? nil : caption))
         }
     }
 }
@@ -127,6 +134,11 @@ public protocol PinModule {
     static func diCompactLeading(_ ctx: PinRenderContext) -> AnyView
     static func diCompactTrailing(_ ctx: PinRenderContext) -> AnyView
     static func diMinimal(_ ctx: PinRenderContext) -> AnyView
+
+    /// A single compact row for the multi-pin roster — shown in the expanded
+    /// island and the lock-screen card when more than one pin is live: glyph +
+    /// title, plus the type's inline primary action (Walk / Copy / countdown).
+    static func liveRow(_ ctx: PinRenderContext) -> AnyView
 }
 
 public extension PinModule {
@@ -144,6 +156,20 @@ public extension PinModule {
             Image(systemName: ctx.appearance.symbolName)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(ctx.accent)
+        )
+    }
+
+    /// Glyph + display name, no action. Types override to add their title and
+    /// inline action; this keeps an unregistered or actionless type renderable.
+    static func liveRow(_ ctx: PinRenderContext) -> AnyView {
+        AnyView(
+            HStack(spacing: 10) {
+                PinGlyph(appearance: ctx.appearance, size: 30)
+                Text(displayName)
+                    .font(.subheadline)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+            }
         )
     }
 }

@@ -75,89 +75,170 @@ private struct HomeWidgetView: View {
     let entry: HomeEntry
 
     var body: some View {
+        content
+            // The widget paints its own dark stage (ListBackdrop), so
+            // pin colours read regardless of the system appearance. Force dark so
+            // `.primary` / `.secondary` text resolves light instead of going
+            // black-on-black when the phone is in light mode.
+            .environment(\.colorScheme, .dark)
+    }
+
+    @ViewBuilder private var content: some View {
         if entry.pins.isEmpty {
             EmptyHome()
-        } else if family == .systemSmall {
-            SmallHome(pin: entry.pins[0], overflow: entry.pins.count - 1)
+        } else if family == .systemSmall && entry.pins.count > 1 {
+            // More than one pin in the small tile: a notification card can only
+            // hold one, so show the pins as their badges in an app-library grid.
+            GlyphLibrary(pins: Array(entry.pins.prefix(9)), total: entry.pins.count)
         } else {
-            ListHome(pins: Array(entry.pins.prefix(family == .systemLarge ? 5 : 3)),
-                     total: entry.pins.count)
+            ListHome(pins: Array(entry.pins.prefix(capacity)), total: entry.pins.count)
+        }
+    }
+
+    /// How many notification-style cards fit per family.
+    private var capacity: Int {
+        switch family {
+        case .systemLarge:  return 5
+        case .systemMedium: return 2
+        default:            return 1   // small: one card fills the tile
         }
     }
 }
 
-// MARK: - Small (one pin, hero)
+// MARK: - App-library grid (small, many pins)
 
-private struct SmallHome: View {
-    let pin: Pin
-    /// How many other pins aren't shown.
-    let overflow: Int
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            WidgetGlyph(appearance: pin.appearance, size: 42)
-            Spacer(minLength: 0)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(pinTitle(pin))
-                    .font(.headline)
-                    .lineLimit(2)
-                PinSubtitle(pin: pin)
-            }
-            .fontDesign(pin.appearance.fontDesign.design)
-            HStack(spacing: 6) {
-                WidgetStatus(pin: pin)
-                Spacer(minLength: 0)
-                if overflow > 0 {
-                    Text("+\(overflow)")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .containerBackground(for: .widget) { AccentWash(appearance: pin.appearance) }
-        .widgetURL(DeepLink.pin(pin.id).url)
-    }
-}
-
-// MARK: - Medium / Large (a list)
-
-private struct ListHome: View {
+/// The small tile when several pins are live: just their badges, tidily gridded
+/// like the home-screen App Library — each a tap-through to its pin. Two columns
+/// up to four pins (big badges), three beyond that, with a "+N" overflow chip.
+private struct GlyphLibrary: View {
     let pins: [Pin]
     let total: Int
 
+    private var columnCount: Int { pins.count <= 4 ? 2 : 3 }
+    private var glyphSize: CGFloat { pins.count <= 4 ? 56 : 38 }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Cling")
-                    .font(.headline)
-                Spacer()
-                Text(total == 1 ? "1 pinned" : "\(total) pinned")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-            }
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 10),
+                            count: columnCount)
+        LazyVGrid(columns: columns, spacing: 10) {
             ForEach(pins) { pin in
                 Link(destination: DeepLink.pin(pin.id).url) {
-                    WidgetPinRow(pin: pin)
-                        .padding(.vertical, 8)
-                        .padding(.horizontal, 10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background {
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(.white.opacity(0.06))
-                                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .strokeBorder(pin.appearance.accent.color.opacity(0.35), lineWidth: 1))
-                        }
+                    WidgetGlyph(appearance: pin.appearance, size: glyphSize)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay(alignment: .bottomTrailing) {
+            if total > pins.count {
+                Text("+\(total - pins.count)")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(.white.opacity(0.12)))
+            }
+        }
+        .containerBackground(for: .widget) { ListBackdrop(pins: pins) }
+    }
+}
+
+// MARK: - The board (stacked notification cards)
+
+private struct ListHome: View {
+    @Environment(\.widgetFamily) private var family
+    let pins: [Pin]
+    let total: Int
+
+    private var isSmall: Bool { family == .systemSmall }
+    // Only the large tile has the vertical room for a title row. On medium the
+    // header plus two full cards overflow the tile and WidgetKit clips the top
+    // of "Cling" and the bottom card — so drop it and let the cards breathe.
+    private var showsHeader: Bool { family == .systemLarge }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: isSmall ? 0 : 6) {
+            if showsHeader {
+                HStack {
+                    Text("Cling").font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Text(total == 1 ? "1 pinned" : "\(total) pinned")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.bottom, 2)
+            }
+            // Cards hold their natural height and stack from the top, like
+            // notifications — never stretched to fill, so a single pin reads as
+            // one card with calm space below instead of a giant void.
+            ForEach(pins) { pin in
+                Link(destination: DeepLink.pin(pin.id).url) {
+                    PinCard(pin: pin, fills: isSmall)
                 }
             }
             if total > pins.count {
                 Text("+\(total - pins.count) more")
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(.tertiary)
+                    .padding(.leading, 4)
             }
-            Spacer(minLength: 0)
+            if !isSmall { Spacer(minLength: 0) }
         }
         .containerBackground(for: .widget) { ListBackdrop(pins: pins) }
+    }
+}
+
+/// One pin drawn as a notification-style card: glyph, headline (the note text /
+/// label), and a status line ("Pinned until 2:12" / "Expired" / a countdown).
+private struct PinCard: View {
+    let pin: Pin
+    /// Stretch to fill the tile (small family, one card) vs. hug content and
+    /// stack like a notification (medium/large).
+    var fills: Bool = false
+
+    var body: some View {
+        Group {
+            if fills {
+                // Small family, one card: a glyph beside the text starves the
+                // headline so a word like "discord.com" breaks mid-character.
+                // Stack instead — glyph up top, then text across the full width.
+                VStack(alignment: .leading, spacing: 0) {
+                    WidgetGlyph(appearance: pin.appearance, size: 40)
+                    Spacer(minLength: 8)
+                    text
+                }
+            } else {
+                HStack(alignment: .top, spacing: 10) {
+                    WidgetGlyph(appearance: pin.appearance, size: 34)
+                    text
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .padding(fills ? 12 : 10)
+        .frame(maxWidth: .infinity, maxHeight: fills ? .infinity : nil, alignment: .topLeading)
+        .background {
+            // Lighter than before: a thin accent tint over a faint glass fill,
+            // hairline accent edge — reads as a calm card, not a heavy block.
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(pin.appearance.accent.color.opacity(0.15))
+                .background(RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(.white.opacity(0.05)))
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(pin.appearance.accent.color.opacity(0.32), lineWidth: 1))
+        }
+    }
+
+    private var text: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(pinTitle(pin))
+                .font(.headline)
+                .lineLimit(fills ? 3 : 1)
+                .minimumScaleFactor(0.8)
+                .multilineTextAlignment(.leading)
+            PinSubtitle(pin: pin)
+            WidgetStatus(pin: pin)
+        }
+        .fontDesign(pin.appearance.fontDesign.design)
     }
 }
 
@@ -193,26 +274,6 @@ private struct EmptyHome: View {
 // to the active rendering mode, instead of reusing the app's full-colour
 // `listRow` / `ExpiryBadge`.
 
-/// One pin as a widget row: glyph, title + subtitle, trailing status.
-private struct WidgetPinRow: View {
-    let pin: Pin
-
-    var body: some View {
-        HStack(spacing: 10) {
-            WidgetGlyph(appearance: pin.appearance, size: 34)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(pinTitle(pin))
-                    .font(.subheadline.weight(.medium))
-                    .lineLimit(1)
-                PinSubtitle(pin: pin)
-            }
-            Spacer(minLength: 6)
-            WidgetStatus(pin: pin)
-        }
-        .fontDesign(pin.appearance.fontDesign.design)
-    }
-}
-
 /// The pin's badge. In full colour it's the app's vivid glyph; in vibrant /
 /// accented modes it drops to a high-contrast symbol on a faint chip so it
 /// never desaturates into a featureless white square.
@@ -246,7 +307,7 @@ private struct WidgetStatus: View {
         switch pin.status {
         case .live:
             if let staleDate = pin.staleDate, pin.isRenewable {
-                stamp("until \(staleDate.formatted(date: .omitted, time: .shortened))",
+                stamp("Pinned until \(staleDate.formatted(date: .omitted, time: .shortened))",
                       symbol: "clock", tint: .secondary)
             } else {
                 stamp("Pinned", symbol: "pin.fill", tint: pin.appearance.accent.color)
@@ -266,13 +327,15 @@ private struct WidgetStatus: View {
                 .font(.system(size: 9, weight: .semibold))
             Text(text)
                 .font(.caption2.weight(.medium))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
         }
         .foregroundStyle(tint)
     }
 }
 
 /// The pin's subtitle line — the secondary detail per type (a live countdown
-/// for timers, the parking note, the clipboard source).
+/// for timers, the parking note, the note's web source).
 private struct PinSubtitle: View {
     let pin: Pin
 
@@ -292,11 +355,14 @@ private struct PinSubtitle: View {
             if let note = p.note {
                 Text(note).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
-        case .clipboard(let c):
-            if let host = c.sourceURL?.host() {
+        case .note(let n):
+            // A bare-link note already shows its host as the headline, so the
+            // host subtitle would just repeat it — only draw it for excerpt
+            // notes (prose text + a separate source).
+            if noteBareLink(n) == nil, let host = n.sourceURL?.host() {
                 Text(host).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
-        case .note:
+        case .decor:
             EmptyView()
         }
     }
@@ -305,28 +371,33 @@ private struct PinSubtitle: View {
 /// The pin's headline, per type.
 private func pinTitle(_ pin: Pin) -> String {
     switch pin.payload {
-    case .note(let n):      n.text.isEmpty ? "Note" : n.text
+    case .note(let n):
+        if n.text.isEmpty { "Note" }
+        // Shared-from-web notes carry the URL as their text; a raw
+        // "https://d…" makes a useless headline, so show the clean host.
+        else if let url = noteBareLink(n) { prettyHost(url) }
+        else { n.text }
     case .timer(let t):     t.label.isEmpty ? "Timer" : t.label
     case .parking(let p):   p.displayTitle
-    case .clipboard(let c): c.text.isEmpty ? "Clipboard" : c.text
+    case .decor(let d):     d.displayLabel ?? "Decoration"
     }
 }
 
-/// A pin-accent wash for the small widget — the pool of colour pinned at the
-/// top, sinking to near-black, echoing the app's lock-screen stage.
-private struct AccentWash: View {
-    let appearance: PinAppearance
+/// The link when a note's text is *just* a URL (a share-sheet link with no
+/// excerpt), else nil — distinguishes link pins from prose notes that merely
+/// carry a source.
+private func noteBareLink(_ n: NotePayload) -> URL? {
+    let trimmed = n.text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let url = URL(string: trimmed), url.scheme != nil, url.host() != nil
+    else { return nil }
+    return url
+}
 
-    var body: some View {
-        ZStack {
-            Color.black
-            LinearGradient(
-                colors: [appearance.accent.color.opacity(0.45),
-                         (appearance.accentEnd ?? appearance.accent).color.opacity(0.18),
-                         .black],
-                startPoint: .topLeading, endPoint: .bottom)
-        }
-    }
+/// A URL's host without the "www." noise — "drive.google.com" not
+/// "https://www…".
+private func prettyHost(_ url: URL) -> String {
+    let host = url.host() ?? url.absoluteString
+    return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
 }
 
 /// A calmer backdrop for the list families — a hint of the hero pin's accent so

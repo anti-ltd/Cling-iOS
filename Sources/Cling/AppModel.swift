@@ -17,7 +17,12 @@ final class AppModel {
     /// The live settings. Mutating any field persists the whole value to the
     /// shared store so extensions read the same defaults.
     var settings: ClingSettings {
-        didSet { store.saveSettings(settings) }
+        didSet {
+            store.saveSettings(settings)
+            // The global house style changed — re-dress every pin (and push
+            // the new look into anything live) so the change is instant.
+            if settings.globalStyle != oldValue.globalStyle { restyleAllPins() }
+        }
     }
 
     /// All pins, every status. Views filter what they need.
@@ -32,6 +37,9 @@ final class AppModel {
     private let renewals = RenewalScheduler()
     /// UNUserNotificationCenter holds its delegate weakly — owned here.
     private let notificationRouter = NotificationRouter()
+    /// Collects APNs tokens so a server can push pins in (Tier 2 background
+    /// pinning). Held for the app's lifetime.
+    private let pushRegistrar = PushToStartRegistrar()
     /// Held for the app's lifetime; fires when another process (the share
     /// extension) writes pins.
     private var pinsToken: AnyObject?
@@ -51,6 +59,9 @@ final class AppModel {
             Task { await self?.activate(pinID: pinID) }
         }
         UNUserNotificationCenter.current().delegate = notificationRouter
+        // Start collecting push tokens. The upload sink is left unset until the
+        // server exists; tokens persist locally meanwhile (see PushTokenStore).
+        pushRegistrar.start()
         reapOrphanedPhotos()
         sweepPendingPins()
         renewExpiringPins()
@@ -149,10 +160,11 @@ final class AppModel {
 
     @discardableResult
     func createPin(payload: PinPayload, appearance: PinAppearance? = nil) -> Pin {
+        let base = appearance ?? settings.defaultAppearance(for: payload.typeID)
         let pin = Pin(
             payload: payload,
             endDate: userEndDate(of: payload),
-            appearance: appearance ?? settings.defaultAppearance(for: payload.typeID),
+            appearance: settings.styled(base),
             status: .pending
         )
         pins.append(pin)
@@ -162,11 +174,28 @@ final class AppModel {
     }
 
     /// Apply a content/appearance edit and push it into the live activity.
+    /// Re-bakes the global house style so a per-pin accent/glyph edit can't
+    /// drift the shared surface/type/density/border.
     func update(_ pin: Pin) {
         guard let i = pins.firstIndex(where: { $0.id == pin.id }) else { return }
-        pins[i] = pin
+        var styled = pin
+        styled.appearance = settings.styled(pin.appearance)
+        pins[i] = styled
         persist()
-        if pin.status == .live {
+        if styled.status == .live {
+            Task { await coordinator.refresh(styled) }
+        }
+    }
+
+    /// Re-apply the global house style to every pin and re-push the live ones.
+    /// Called when `settings.globalStyle` changes — one knob re-dresses the
+    /// whole board (and the Dynamic Island) at once.
+    private func restyleAllPins() {
+        for i in pins.indices {
+            pins[i].appearance = settings.styled(pins[i].appearance)
+        }
+        persist()
+        for pin in pins where pin.status == .live {
             Task { await coordinator.refresh(pin) }
         }
     }
@@ -211,7 +240,7 @@ final class AppModel {
         switch payload {
         case .parking(let parking): parking.photoFilename
         case .note(let note):       note.photoFilename
-        case .timer, .clipboard:    nil
+        case .timer, .decor:        nil
         }
     }
 }

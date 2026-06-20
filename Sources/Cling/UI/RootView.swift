@@ -9,6 +9,7 @@ import iUXiOS
 struct RootView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.openURL) private var openURL
     @State private var showComposer = false
     @State private var path: [UUID] = []
 
@@ -23,7 +24,7 @@ struct RootView: View {
                 PinListView(onAdd: { showComposer = true })
             }
             .navigationTitle("Cling")
-            .navigationBarTitleDisplayMode(.large)
+            .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: UUID.self) { id in
                 if let pin = model.pin(id: id) {
                     PinDetailView(pin: pin)
@@ -77,6 +78,18 @@ struct RootView: View {
                 guard model.pin(id: id) != nil else { return }
                 path = [id]
                 Task { await model.activate(pinID: id) }
+            case .create(let request):
+                // Another app handed us a pin. Create + activate headlessly,
+                // surface it, then fire the caller's success callback so it can
+                // confirm and link back.
+                Task {
+                    let pin = await PinService.createAndActivate(request.payload)
+                    model.reloadPins()
+                    path = [pin.id]
+                    if let callback = request.successCallback(pinID: pin.id) {
+                        openURL(callback)
+                    }
+                }
             }
         }
     }

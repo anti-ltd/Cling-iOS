@@ -6,6 +6,10 @@
  */
 import SwiftUI
 import iUXiOS
+#if canImport(UIKit)
+import UIKit
+import CoreText
+#endif
 
 @MainActor
 public enum ParkingPinModule: PinModule {
@@ -80,22 +84,62 @@ public enum ParkingPinModule: PinModule {
 
     public static func diExpandedCenter(_ ctx: PinRenderContext) -> AnyView {
         guard let parking = payload(ctx.payload) else { return AnyView(EmptyView()) }
+        // Title only. The note lives in the bottom region — the center region
+        // has a fixed height that clips a second text line.
         return AnyView(
-            VStack(spacing: 1) {
-                Text(parking.displayTitle)
-                    .font(.subheadline.weight(.medium))
-                if let note = parking.note {
-                    Text(note)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
+            Text(parking.displayTitle)
+                .font(.subheadline.weight(.medium))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
         )
     }
 
     public static func diExpandedLeading(_ ctx: PinRenderContext) -> AnyView {
-        AnyView(PinGlyph(appearance: ctx.appearance, size: 28))
+        // Inset from the island's rounded corner — otherwise the corner curve
+        // clips the badge's top-left.
+        AnyView(
+            PinGlyph(appearance: ctx.appearance, size: 40)
+                .padding(.leading, 4)
+                .padding(.top, 2)
+        )
+    }
+
+    /// The actionable bit: a Link to Apple Maps walking directions. A Link
+    /// inside a Dynamic Island region overrides the island's `.widgetURL`
+    /// (which opens the app), so this tap goes straight to Maps instead.
+    public static func diExpandedBottom(_ ctx: PinRenderContext) -> AnyView? {
+        guard let parking = payload(ctx.payload) else { return nil }
+        let provider = ClingStore.shared.loadSettings().mapProvider
+        return AnyView(
+            VStack(spacing: 6) {
+                if let note = parking.note {
+#if canImport(UIKit)
+                    fractionText(note, base: designed(.subheadline, ctx.appearance.fontDesign.design))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+#else
+                    Text(note)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+#endif
+                }
+                Link(destination: parking.walkingDirectionsURL(provider: provider)) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "figure.walk")
+                            .font(.system(size: 14, weight: .semibold))
+                        Text("Walk")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 9)
+                    .background(ctx.accent, in: Capsule())
+                }
+            }
+            .padding(.horizontal, 6)
+            .padding(.top, 4)
+        )
     }
 
     public static func diExpandedTrailing(_ ctx: PinRenderContext) -> AnyView {
@@ -103,6 +147,41 @@ public enum ParkingPinModule: PinModule {
             return AnyView(EmptyView())
         }
         return AnyView(thumb(filename, size: 28))
+    }
+
+    public static func liveRow(_ ctx: PinRenderContext) -> AnyView {
+        guard let parking = payload(ctx.payload) else { return AnyView(EmptyView()) }
+        let provider = ClingStore.shared.loadSettings().mapProvider
+        return AnyView(
+            HStack(spacing: 10) {
+                PinGlyph(appearance: ctx.appearance, size: 30)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(parking.displayTitle)
+                        .font(.subheadline.weight(.medium))
+                        .lineLimit(1)
+                    if let note = parking.note {
+#if canImport(UIKit)
+                        fractionText(note, base: designed(.caption2, ctx.appearance.fontDesign.design))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+#else
+                        Text(note)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+#endif
+                    }
+                }
+                Spacer(minLength: 8)
+                Link(destination: parking.walkingDirectionsURL(provider: provider)) {
+                    Image(systemName: "figure.walk")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 46, height: 32)
+                        .background(ctx.accent, in: Capsule())
+                }
+            }
+        )
     }
 
     public static func diCompactLeading(_ ctx: PinRenderContext) -> AnyView {
@@ -117,6 +196,14 @@ public enum ParkingPinModule: PinModule {
         // If they told us where they parked, show that instead of a bare "P".
         let note = payload(ctx.payload)?.note?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let note, !note.isEmpty {
+#if canImport(UIKit)
+            return AnyView(
+                fractionText(note, base: .systemFont(ofSize: 13, weight: .semibold))
+                    .foregroundStyle(ctx.accent)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            )
+#else
             return AnyView(
                 Text(note)
                     .font(.system(size: 13, weight: .semibold))
@@ -124,6 +211,7 @@ public enum ParkingPinModule: PinModule {
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
             )
+#endif
         }
         return AnyView(
             Image(systemName: "parkingsign")
@@ -131,6 +219,63 @@ public enum ParkingPinModule: PinModule {
                 .foregroundStyle(ctx.accent)
         )
     }
+
+#if canImport(UIKit)
+    /// Turns ASCII fractions ("3/4") into true diagonal fraction glyphs — a
+    /// small numerator over a small denominator — so they read tidy and don't
+    /// inflate the line height with full-size digits.
+    private static func fractioned(_ base: UIFont) -> Font {
+        let desc = base.fontDescriptor.addingAttributes([
+            .featureSettings: [[
+                UIFontDescriptor.FeatureKey.type: kFractionsType,
+                UIFontDescriptor.FeatureKey.selector: kDiagonalFractionsSelector,
+            ]]
+        ])
+        return Font(UIFont(descriptor: desc, size: base.pointSize))
+    }
+
+    /// Builds a `Text` where only fraction tokens (`3/4`) get the diagonal
+    /// fraction font; everything else — including a leading whole number like
+    /// the `9` in `9 3/4` — stays full size in `base`.
+    private static func fractionText(_ s: String, base: UIFont) -> Text {
+        let normal = Font(base)
+        let frac = fractioned(base)
+        let ns = s as NSString
+        let matches = (try? NSRegularExpression(pattern: "\\d+/\\d+"))?
+            .matches(in: s, range: NSRange(location: 0, length: ns.length)) ?? []
+        guard !matches.isEmpty else { return Text(s).font(normal) }
+
+        var result = Text("")
+        var idx = 0
+        for m in matches {
+            if m.range.location > idx {
+                let pre = ns.substring(with: NSRange(location: idx, length: m.range.location - idx))
+                result = result + Text(pre).font(normal)
+            }
+            result = result + Text(ns.substring(with: m.range)).font(frac)
+            idx = m.range.location + m.range.length
+        }
+        if idx < ns.length {
+            result = result + Text(ns.substring(from: idx)).font(normal)
+        }
+        return result
+    }
+
+    /// A dynamic-type font for `style`, carrying the pin's font design so the
+    /// fraction note matches the rest of the activity (rounded/serif/etc.).
+    private static func designed(_ style: UIFont.TextStyle, _ design: Font.Design?) -> UIFont {
+        let base = UIFont.preferredFont(forTextStyle: style)
+        let system: UIFontDescriptor.SystemDesign
+        switch design {
+        case .rounded:    system = .rounded
+        case .serif:      system = .serif
+        case .monospaced: system = .monospaced
+        default:          system = .default
+        }
+        guard let desc = base.fontDescriptor.withDesign(system) else { return base }
+        return UIFont(descriptor: desc, size: 0)
+    }
+#endif
 
     /// Loads the photo from the shared container — the widget process can,
     /// because both sides sit in the App Group.

@@ -9,7 +9,7 @@ public enum PinRegistry {
         .note: NotePinModule.self,
         .timer: TimerPinModule.self,
         .parking: ParkingPinModule.self,
-        .clipboard: ClipboardPinModule.self,
+        .decor: DecorPinModule.self,
     ]
 
     public static func module(for typeID: PinTypeID) -> any PinModule.Type {

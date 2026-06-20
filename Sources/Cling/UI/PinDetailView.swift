@@ -67,19 +67,19 @@ struct PinDetailView: View {
     @ViewBuilder private var primaryAction: some View {
         switch pin.payload {
         case .parking(let parking):
-            AccentActionButton(title: "Walk me back", systemImage: "figure.walk",
+            AccentActionButton(title: "Walk", systemImage: "figure.walk",
                                accent: pin.appearance.accentGradient) {
                 openInMaps(parking)
             }
-        case .clipboard(let clip):
+        case .note(let note) where !note.text.isEmpty:
             AccentActionButton(title: "Copy", systemImage: "doc.on.doc",
                                accent: pin.appearance.accentGradient) {
                 #if canImport(UIKit)
-                UIPasteboard.general.string = clip.text
+                UIPasteboard.general.string = note.text
                 UINotificationFeedbackGenerator().notificationOccurred(.success)
                 #endif
             }
-        case .note, .timer:
+        case .note, .timer, .decor:
             EmptyView()
         }
     }

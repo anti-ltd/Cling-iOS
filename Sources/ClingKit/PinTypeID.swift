@@ -9,5 +9,7 @@ public enum PinTypeID: String, Codable, Sendable, Hashable, CaseIterable {
     case note
     case timer
     case parking
-    case clipboard
+    /// A content-free pin that exists only to dress the Dynamic Island — a
+    /// glyph in the house style, with an optional short caption.
+    case decor
 }

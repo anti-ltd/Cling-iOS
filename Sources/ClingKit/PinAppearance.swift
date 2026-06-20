@@ -38,6 +38,36 @@ public enum PinFontDesign: String, Codable, Sendable, Hashable, CaseIterable {
     }
 }
 
+/// The edge a pin's card draws. The Dynamic Island's compact/expanded regions
+/// are system-framed (we only colour their keyline), so a border lands on the
+/// lock-screen card and the in-app stage — a quiet way to firm up `outline`
+/// and `glass` surfaces.
+public enum PinBorder: String, Codable, Sendable, Hashable, CaseIterable {
+    /// No stroke — the surface stands on its own.
+    case none
+    /// A faint neutral hairline, independent of accent.
+    case hairline
+    /// A confident stroke in the pin's accent.
+    case accent
+
+    /// The stroke colour for a card with the given accent, or nil for `.none`.
+    public func strokeColor(accent: Color) -> Color? {
+        switch self {
+        case .none:     nil
+        case .hairline: .white.opacity(0.22)
+        case .accent:   accent.opacity(0.85)
+        }
+    }
+
+    public var lineWidth: CGFloat {
+        switch self {
+        case .none:     0
+        case .hairline: 1
+        case .accent:   1.5
+        }
+    }
+}
+
 public struct PinAppearance: Codable, Hashable, Sendable {
     public var accent: RGBA
     /// When set, the accent renders as a two-stop gradient (accent → accentEnd)
@@ -49,6 +79,10 @@ public struct PinAppearance: Codable, Hashable, Sendable {
     public var density: LayoutDensity
     public var style: PinStyle
     public var fontDesign: PinFontDesign
+    /// The card edge. Like density/style/fontDesign, this is part of the
+    /// global "feel" (`GlobalPinStyle`) — stored here because it travels in
+    /// the ContentState the widget renders from.
+    public var border: PinBorder
     /// The "Pinned until HH:mm" caption on the lock-screen card. On by
     /// default (expiry honesty), but the pin is the user's — hideable. The
     /// stale notice ("no longer pinned") always shows; that one's actionable.
@@ -61,6 +95,7 @@ public struct PinAppearance: Codable, Hashable, Sendable {
         density: LayoutDensity = .regular,
         style: PinStyle = .glass,
         fontDesign: PinFontDesign = .standard,
+        border: PinBorder = .none,
         showsExpiry: Bool = true
     ) {
         self.accent = accent
@@ -69,6 +104,7 @@ public struct PinAppearance: Codable, Hashable, Sendable {
         self.density = density
         self.style = style
         self.fontDesign = fontDesign
+        self.border = border
         self.showsExpiry = showsExpiry
     }
 
@@ -86,7 +122,7 @@ public struct PinAppearance: Codable, Hashable, Sendable {
     // fallbacks so old JSON (and future additions) never invalidate the store.
 
     private enum CodingKeys: String, CodingKey {
-        case accent, accentEnd, symbolName, density, style, fontDesign, showsExpiry
+        case accent, accentEnd, symbolName, density, style, fontDesign, border, showsExpiry
     }
 
     public init(from decoder: Decoder) throws {
@@ -97,6 +133,7 @@ public struct PinAppearance: Codable, Hashable, Sendable {
         density = (try? c.decode(LayoutDensity.self, forKey: .density)) ?? .regular
         style = (try? c.decode(PinStyle.self, forKey: .style)) ?? .glass
         fontDesign = (try? c.decode(PinFontDesign.self, forKey: .fontDesign)) ?? .standard
+        border = (try? c.decode(PinBorder.self, forKey: .border)) ?? .none
         showsExpiry = (try? c.decode(Bool.self, forKey: .showsExpiry)) ?? true
     }
 
@@ -113,4 +150,55 @@ public struct PinAppearance: Codable, Hashable, Sendable {
 
     /// The accent swatches offered in the appearance editor.
     public static let accentPresets: [RGBA] = [indigo, mint, ember, sky, rose, gold]
+}
+
+/// The app-wide *feel* every pin and the Dynamic Island share: surface, type,
+/// density and border. Accent and glyph stay per-type (each pin type keeps its
+/// colour-coding and icon) — this is the chrome that unifies them. Edited once
+/// in Settings, then applied onto each pin's per-type base to produce the
+/// `PinAppearance` that actually renders, so changing it re-dresses every live
+/// pin at once.
+public struct GlobalPinStyle: Codable, Hashable, Sendable {
+    public var density: LayoutDensity
+    public var style: PinStyle
+    public var fontDesign: PinFontDesign
+    public var border: PinBorder
+
+    public init(
+        density: LayoutDensity = .regular,
+        style: PinStyle = .glass,
+        fontDesign: PinFontDesign = .standard,
+        border: PinBorder = .none
+    ) {
+        self.density = density
+        self.style = style
+        self.fontDesign = fontDesign
+        self.border = border
+    }
+
+    public static let `default` = GlobalPinStyle()
+
+    /// Overlay this house style onto a per-type base (accent + glyph),
+    /// producing the appearance a pin renders with. Accent, accentEnd,
+    /// symbol and showsExpiry are left untouched.
+    public func apply(to base: PinAppearance) -> PinAppearance {
+        var a = base
+        a.density = density
+        a.style = style
+        a.fontDesign = fontDesign
+        a.border = border
+        return a
+    }
+
+    // MARK: Forward-compatible decoding — same discipline as the rest of the store.
+
+    private enum CodingKeys: String, CodingKey { case density, style, fontDesign, border }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        density = (try? c.decode(LayoutDensity.self, forKey: .density)) ?? .regular
+        style = (try? c.decode(PinStyle.self, forKey: .style)) ?? .glass
+        fontDesign = (try? c.decode(PinFontDesign.self, forKey: .fontDesign)) ?? .standard
+        border = (try? c.decode(PinBorder.self, forKey: .border)) ?? .none
+    }
 }

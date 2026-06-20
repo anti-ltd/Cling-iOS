@@ -17,18 +17,30 @@ struct ClingLiveActivity: Widget {
         ActivityConfiguration(for: ClingActivityAttributes.self) { context in
             LockScreenPinView(context: context)
         } dynamicIsland: { context in
-            DynamicIsland {
+            let roster = LivePinRoster.onScreen()
+            // `DynamicIslandExpandedContentBuilder` has no `buildEither`, so the
+            // roster-vs-single choice can't branch the *regions*. Keep the
+            // regions fixed and branch inside each region's view content (a
+            // normal ViewBuilder): several pins live → the center holds the
+            // roster and the other regions stay empty.
+            let many = roster.count >= 2
+            return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    RegionView(.expandedLeading, context: context)
+                    if !many { RegionView(.expandedLeading, context: context) }
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    RegionView(.expandedTrailing, context: context)
+                    if !many { RegionView(.expandedTrailing, context: context) }
                 }
                 DynamicIslandExpandedRegion(.center) {
-                    RegionView(.expandedCenter, context: context)
+                    if many {
+                        LivePinListView(pins: roster)
+                            .padding(.top, 4)
+                    } else {
+                        RegionView(.expandedCenter, context: context)
+                    }
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    RegionView(.expandedBottom, context: context)
+                    if !many { RegionView(.expandedBottom, context: context) }
                 }
             } compactLeading: {
                 RegionView(.compactLeading, context: context)
@@ -51,25 +63,44 @@ private struct LockScreenPinView: View {
     var body: some View {
         let ctx = context.attributes.renderContext(context.state)
         let accent = ctx.accent
-        VStack(alignment: .leading, spacing: 6) {
-            PinRegistry.module(for: context.attributes.typeID)
-                .lockScreen(ctx)
-            // Honest expiry, on every pin whose life is capped by the system
-            // ceiling rather than its own end. Stale content also says so —
-            // the system dims it, we name it.
-            if context.isStale {
-                expiryLine("No longer pinned — open Cling to renew", tint: .orange)
-            } else if let staleDate = ctx.staleDate, ctx.appearance.showsExpiry, isCeilingBound(ctx) {
-                expiryLine(
-                    "Pinned until \(staleDate.formatted(date: .omitted, time: .shortened))",
-                    tint: .secondary)
+        let roster = LivePinRoster.onScreen()
+        return Group {
+            if roster.count >= 2 {
+                // More than one pin live: the card becomes the roster.
+                LivePinListView(pins: roster)
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    PinRegistry.module(for: context.attributes.typeID)
+                        .lockScreen(ctx)
+                    // Honest expiry, on every pin whose life is capped by the
+                    // system ceiling rather than its own end. Stale content
+                    // also says so — the system dims it, we name it.
+                    if context.isStale {
+                        expiryLine("No longer pinned — open Cling to renew", tint: .orange)
+                    } else if let staleDate = ctx.staleDate, ctx.appearance.showsExpiry, isCeilingBound(ctx) {
+                        expiryLine(
+                            "Pinned until \(staleDate.formatted(date: .omitted, time: .shortened))",
+                            tint: .secondary)
+                    }
+                }
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, ctx.density == .compact ? 10 : 14)
+        .overlay(borderOverlay(border: ctx.appearance.border, accent: accent))
         .fontDesign(ctx.appearance.fontDesign.design)
         .activityBackgroundTint(backgroundTint(style: ctx.appearance.style, accent: accent))
         .activitySystemActionForegroundColor(accent)
+    }
+
+    // The global house style's border, drawn just inside the system's card.
+    // The radius approximates the Live Activity container; the DI's compact and
+    // expanded regions are system-framed, so their accent edge is `keylineTint`.
+    @ViewBuilder private func borderOverlay(border: PinBorder, accent: Color) -> some View {
+        if let stroke = border.strokeColor(accent: accent) {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(stroke, lineWidth: border.lineWidth)
+        }
     }
 
     /// True when the stale date is the 8h ceiling, not the pin's own end —

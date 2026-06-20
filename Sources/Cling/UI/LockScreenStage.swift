@@ -32,6 +32,7 @@ struct LockScreenStage: View {
                 .padding(.vertical, appearance.density == .compact ? 12 : 16)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(activitySurface)
+                .overlay(borderOverlay)
                 .padding(.horizontal, 14)
         }
         .padding(.top, 22)
@@ -95,6 +96,15 @@ struct LockScreenStage: View {
         case .outline:
             rr.fill(.black.opacity(0.25))
                 .overlay(rr.strokeBorder(appearance.accent.color.opacity(0.6), lineWidth: 1))
+        }
+    }
+
+    // The optional border edge, layered over whatever surface style drew —
+    // the global house style's stroke, in neutral or accent.
+    @ViewBuilder private var borderOverlay: some View {
+        if let stroke = appearance.border.strokeColor(accent: appearance.accent.color) {
+            RoundedRectangle(cornerRadius: UX.Glass.tileRadius, style: .continuous)
+                .strokeBorder(stroke, lineWidth: appearance.border.lineWidth)
         }
     }
 }
