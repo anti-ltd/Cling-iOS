@@ -30,16 +30,18 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>2</string>
+	<string>12</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSCameraUsageDescription</key>
-	<string>Cling can attach a photo of your parking spot to the pin.</string>
+	<string>Cling uses the camera to attach a photo to a pin.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Cling uses your location once to remember where you parked.</string>
+	<string>Cling uses your location to remember where you parked.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Cling can attach a photo from your library to a pin.</string>
 	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<key>NSSupportsLiveActivitiesFrequentUpdates</key>
 	<true/>
 	<key>UIApplicationSceneManifest</key>
 	<dict>

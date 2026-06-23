@@ -39,9 +39,21 @@ EXPORT_DIR     := $(BUILD_DIR)/export
 IPA            := $(EXPORT_DIR)/$(APP_NAME).ipa
 EXPORT_OPTIONS := ExportOptions.plist
 
-.PHONY: all project icon build run sim install clean stop help test \
+.PHONY: all project icon changelog build run sim install clean stop help test \
         device device-install device-launch build-device \
         archive package validate-asc upload-asc bump
+
+# Bake CHANGELOG.md into a Swift source the app shows in Settings → Changelog.
+# The build targets list the output as a prerequisite, so editing CHANGELOG.md
+# re-bakes on the next build.
+CHANGELOG_SRC := CHANGELOG.md
+CHANGELOG_GEN := Tools/GenerateChangelog.swift
+CHANGELOG_OUT := Sources/Cling/Changelog.generated.swift
+
+$(CHANGELOG_OUT): $(CHANGELOG_SRC) $(CHANGELOG_GEN)
+	swift Tools/GenerateChangelog.swift
+
+changelog: $(CHANGELOG_OUT)
 
 all: build
 
@@ -49,6 +61,7 @@ help:
 	@echo "Simulator targets:"
 	@echo "  make project — regenerate $(PROJECT) from project.yml (needs xcodegen)"
 	@echo "  make icon    — render the app icon PNGs into Assets.xcassets"
+	@echo "  make changelog — bake CHANGELOG.md into the in-app changelog"
 	@echo "  make build   — xcodebuild for the iOS simulator"
 	@echo "  make run     — boot the sim, install, launch Cling"
 	@echo "  make stop    — terminate the running sim instance"
@@ -79,7 +92,7 @@ project:
 	@echo "Generated $(PROJECT)"
 
 # Build for the iOS simulator. Generates the project on first run.
-build: $(PROJECT)
+build: $(PROJECT) $(CHANGELOG_OUT)
 	@mkdir -p $(BUILD_DIR)
 	xcodebuild \
 		-project $(PROJECT) \
@@ -140,7 +153,7 @@ DEVICE_UDID = $(shell \
 				}'; \
 	fi)
 
-build-device: $(PROJECT)
+build-device: $(PROJECT) $(CHANGELOG_OUT)
 	@mkdir -p $(BUILD_DIR)
 	xcodebuild \
 		-project $(PROJECT) \
@@ -192,7 +205,7 @@ device-launch:
 #   make validate-asc — dry-run the upload (catches most rejections, uploads nothing)
 #   make upload-asc   — archive + package + validate + upload to App Store Connect
 # ============================================================
-archive: project
+archive: project $(CHANGELOG_OUT)
 	@mkdir -p $(BUILD_DIR)
 	rm -rf $(ARCHIVE)
 	xcodebuild \

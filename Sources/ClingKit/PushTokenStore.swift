@@ -21,11 +21,22 @@ public struct PushTokens: Codable, Equatable, Sendable {
     /// Install-wide push-to-start token, hex. Nil until ActivityKit first
     /// hands one over (it can rotate — always use the latest).
     public var pushToStart: String?
-    /// pinID → that activity's update token, hex. Pruned when a pin ends.
+    /// The single roster activity's update token, hex. A server pushes the whole
+    /// refreshed content state to this. Nil until the activity mints one (it can
+    /// rotate); gone when the activity ends.
+    public var rosterUpdateToken: String?
+    /// Legacy per-pin update tokens (one activity per pin). Kept for forward/
+    /// backward-compatible decoding of older token files; unused by the roster
+    /// model.
     public var updateTokens: [UUID: String]
 
-    public init(pushToStart: String? = nil, updateTokens: [UUID: String] = [:]) {
+    public init(
+        pushToStart: String? = nil,
+        rosterUpdateToken: String? = nil,
+        updateTokens: [UUID: String] = [:]
+    ) {
         self.pushToStart = pushToStart
+        self.rosterUpdateToken = rosterUpdateToken
         self.updateTokens = updateTokens
     }
 }
@@ -84,17 +95,20 @@ public final class PushTokenStore: @unchecked Sendable {
         save(t)
     }
 
-    public func setUpdateToken(_ token: String, for pinID: UUID) {
+    /// Record the roster activity's latest update token. No-op (no
+    /// notification) when unchanged, so repeated identical updates from the
+    /// token stream don't churn the uploader.
+    public func setRosterUpdateToken(_ token: String) {
         var t = load()
-        guard t.updateTokens[pinID] != token else { return }
-        t.updateTokens[pinID] = token
+        guard t.rosterUpdateToken != token else { return }
+        t.rosterUpdateToken = token
         save(t)
     }
 
-    public func removeUpdateToken(for pinID: UUID) {
+    public func removeRosterUpdateToken() {
         var t = load()
-        guard t.updateTokens[pinID] != nil else { return }
-        t.updateTokens[pinID] = nil
+        guard t.rosterUpdateToken != nil else { return }
+        t.rosterUpdateToken = nil
         save(t)
     }
 

@@ -10,6 +10,10 @@ public enum PinRegistry {
         .timer: TimerPinModule.self,
         .parking: ParkingPinModule.self,
         .decor: DecorPinModule.self,
+        .match: MatchPinModule.self,
+        .fight: FightPinModule.self,
+        .game: GamePinModule.self,
+        .ticker: TickerPinModule.self,
     ]
 
     public static func module(for typeID: PinTypeID) -> any PinModule.Type {

@@ -1,45 +1,37 @@
 /**
- The multi-pin roster. iOS shows only the most-recently-updated activity in the
- Dynamic Island, and ActivityKit gives a widget no hook into sibling activities
- — so when several pins are live we read them from the shared App Group store at
- render time and list them ourselves. Each row is the pin type's `liveRow`,
- carrying its own inline action (Walk / Copy / countdown).
+ The multi-pin roster view. The single Live Activity carries every live pin in
+ its content state, so when several are pinned we render them as a stack of
+ per-type rows — each the pin type's `liveRow`, carrying its own inline action
+ (Walk / Copy / countdown). Used by both the lock-screen card and the expanded
+ island.
 
- The listed siblings are a store snapshot, refreshed whenever *this* activity
- re-renders; a timer in another row won't tick between updates, but its row is
- still present and honest.
+ Rows read straight from the activity's `[PinSnapshot]`; no App Group round-trip
+ at render time, so each row is as current as the last activity update.
  */
 import SwiftUI
 
-@MainActor
-enum LivePinRoster {
-    /// Pins currently on the lock screen — live, plus aged-to-stale (still
-    /// shown, no longer fresh) — nearest expiry first.
-    static func onScreen() -> [Pin] {
-        ClingStore.shared.loadPins()
-            .filter { $0.status == .live || $0.status == .stale }
-            .sorted { ($0.staleDate ?? .distantFuture) < ($1.staleDate ?? .distantFuture) }
-    }
-
-    static func context(_ pin: Pin) -> PinRenderContext {
-        PinRenderContext(
-            pinID: pin.id,
-            payload: pin.payload,
-            appearance: pin.appearance,
-            staleDate: pin.staleDate)
-    }
-}
-
-/// The roster rendered as a stack of per-type rows, used by both the lock
-/// screen and the expanded island when more than one pin is live.
+/// The roster rendered as a stack of per-type rows. Each row links to its pin's
+/// detail screen; a row's own inline control (when it has one) still wins its
+/// own hit area.
 struct LivePinListView: View {
-    let pins: [Pin]
+    let pins: [PinSnapshot]
     var maxRows: Int = 4
 
     var body: some View {
         VStack(spacing: 8) {
-            ForEach(pins.prefix(maxRows)) { pin in
-                PinRegistry.module(for: pin.typeID).liveRow(LivePinRoster.context(pin))
+            ForEach(pins.prefix(maxRows)) { snapshot in
+                let module = PinRegistry.module(for: snapshot.typeID)
+                let row = module.liveRow(snapshot.renderContext)
+                // A row that carries its own control (Parking's Walk link) must NOT
+                // be wrapped in an outer Link — nesting two interactive elements is
+                // invalid SwiftUI and renders the whole Live Activity blank. Its own
+                // action handles taps; the rest of the row falls to the activity's
+                // widgetURL (opens the app).
+                if module.liveRowHasInlineAction {
+                    row
+                } else {
+                    Link(destination: DeepLink.pin(snapshot.id).url) { row }
+                }
             }
             if pins.count > maxRows {
                 Text("+\(pins.count - maxRows) more pinned")

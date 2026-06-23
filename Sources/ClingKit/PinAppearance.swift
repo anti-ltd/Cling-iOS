@@ -83,9 +83,8 @@ public struct PinAppearance: Codable, Hashable, Sendable {
     /// global "feel" (`GlobalPinStyle`) — stored here because it travels in
     /// the ContentState the widget renders from.
     public var border: PinBorder
-    /// The "Pinned until HH:mm" caption on the lock-screen card. On by
-    /// default (expiry honesty), but the pin is the user's — hideable. The
-    /// stale notice ("no longer pinned") always shows; that one's actionable.
+    /// The "Pinned until HH:mm" caption on the lock-screen card. Off by
+    /// default — the stale notice ("no longer pinned") always shows; that one's actionable.
     public var showsExpiry: Bool
 
     public init(
@@ -96,7 +95,7 @@ public struct PinAppearance: Codable, Hashable, Sendable {
         style: PinStyle = .glass,
         fontDesign: PinFontDesign = .standard,
         border: PinBorder = .none,
-        showsExpiry: Bool = true
+        showsExpiry: Bool = false
     ) {
         self.accent = accent
         self.accentEnd = accentEnd
@@ -134,7 +133,7 @@ public struct PinAppearance: Codable, Hashable, Sendable {
         style = (try? c.decode(PinStyle.self, forKey: .style)) ?? .glass
         fontDesign = (try? c.decode(PinFontDesign.self, forKey: .fontDesign)) ?? .standard
         border = (try? c.decode(PinBorder.self, forKey: .border)) ?? .none
-        showsExpiry = (try? c.decode(Bool.self, forKey: .showsExpiry)) ?? true
+        showsExpiry = (try? c.decode(Bool.self, forKey: .showsExpiry)) ?? false
     }
 
     // MARK: Family palette

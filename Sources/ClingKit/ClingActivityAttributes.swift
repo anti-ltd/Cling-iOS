@@ -1,8 +1,10 @@
 /**
- The ONE `ActivityAttributes` for all pins. ActivityKit binds each widget
- `ActivityConfiguration` to a single concrete attributes type, so heterogeneous
- pin content travels as the `PinPayload` enum and fans out to per-type
- renderers in the widget (see `PinModule` / `PinRegistry`).
+ The ONE `ActivityAttributes` for the whole app — a *roster*, not a single pin.
+ ActivityKit binds each widget `ActivityConfiguration` to a single concrete
+ attributes type and shows only one of an app's activities in the Dynamic
+ Island, so Cling runs exactly one activity whose `ContentState` carries every
+ live pin as a `PinSnapshot`. The widget renders one pin richly, or the list
+ when several are pinned (see `ClingLiveActivity` / `LivePinListView`).
  */
 import Foundation
 #if canImport(ActivityKit)
@@ -10,39 +12,27 @@ import ActivityKit
 
 public struct ClingActivityAttributes: ActivityAttributes {
     public struct ContentState: Codable, Hashable {
-        public var payload: PinPayload
-        /// In ContentState — not attributes — so editing a pin's colour/icon
-        /// updates the live activity without restarting it.
-        public var appearance: PinAppearance
-        /// When this content goes stale — mirrored into the state so the
-        /// renderers can surface expiry honestly ("pinned until 21:40").
+        /// Every pin currently on the lock screen / island, hero first. The
+        /// renderers read this directly — no App Group round-trip at render
+        /// time, so a roster row is as fresh as the last activity update.
+        public var pins: [PinSnapshot]
+        /// When the whole activity goes stale: the latest of the pins' own
+        /// stale dates, capped by the system's 8 h ceiling. Each row still
+        /// surfaces its own `staleDate`; this is the activity-level one.
         public var staleDate: Date?
 
-        public init(payload: PinPayload, appearance: PinAppearance, staleDate: Date? = nil) {
-            self.payload = payload
-            self.appearance = appearance
+        public init(pins: [PinSnapshot], staleDate: Date? = nil) {
+            self.pins = pins
             self.staleDate = staleDate
         }
     }
 
-    /// Immutable for the activity's life.
-    public var pinID: UUID
-    public var typeID: PinTypeID
+    /// Schema version of the content-state shape. Bumped if the roster wire
+    /// format changes, so a push server can refuse a payload it can't build.
+    public var schema: Int
 
-    public init(pinID: UUID, typeID: PinTypeID) {
-        self.pinID = pinID
-        self.typeID = typeID
-    }
-}
-
-public extension ClingActivityAttributes {
-    /// The render context the per-type views consume.
-    func renderContext(_ state: ContentState) -> PinRenderContext {
-        PinRenderContext(
-            pinID: pinID,
-            payload: state.payload,
-            appearance: state.appearance,
-            staleDate: state.staleDate)
+    public init(schema: Int = 1) {
+        self.schema = schema
     }
 }
 #endif

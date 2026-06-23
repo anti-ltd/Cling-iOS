@@ -64,3 +64,42 @@ public struct Pin: Codable, Identifiable, Hashable, Sendable {
 
     public var typeID: PinTypeID { payload.typeID }
 }
+
+/// A pin reduced to exactly what a Live Activity needs to render it — one row
+/// of the roster the single activity carries in its `ContentState`. Lean by
+/// design (no store-only fields like `createdAt`/`activityID`/`status`) so a
+/// roster of several pins still fits the 4 KB content-state budget a push must
+/// honour.
+public struct PinSnapshot: Codable, Identifiable, Hashable, Sendable {
+    public var id: UUID
+    public var typeID: PinTypeID
+    public var payload: PinPayload
+    public var appearance: PinAppearance
+    /// When this pin's content goes stale — its own end or the activity
+    /// ceiling, whichever is sooner. Drives the per-row "Pinned until" caption.
+    public var staleDate: Date?
+
+    public init(
+        id: UUID,
+        typeID: PinTypeID,
+        payload: PinPayload,
+        appearance: PinAppearance,
+        staleDate: Date? = nil
+    ) {
+        self.id = id
+        self.typeID = typeID
+        self.payload = payload
+        self.appearance = appearance
+        self.staleDate = staleDate
+    }
+}
+
+public extension Pin {
+    /// This pin as a roster snapshot, stamped with the activity stale date the
+    /// coordinator computed for it.
+    func snapshot(staleDate: Date?) -> PinSnapshot {
+        PinSnapshot(
+            id: id, typeID: typeID, payload: payload,
+            appearance: appearance, staleDate: staleDate)
+    }
+}

@@ -17,18 +17,18 @@ enum PinDismissal {
 
 @MainActor
 protocol ActivityTransport {
-    /// Start an activity for the pin. Returns the activity id.
-    func start(_ pin: Pin, staleDate: Date) throws -> String
+    /// Reconcile the single roster activity with `snapshots`: start one if none
+    /// is running, update it in place if one is, end it if `snapshots` is empty.
+    /// `restart` forces an end-and-restart even when one is running — the only
+    /// way to reset the system's 8 h ceiling (used by renewal). Returns the id
+    /// of the now-running activity, or nil if none runs (empty / start failed).
+    @discardableResult
+    func syncRoster(_ snapshots: [PinSnapshot], staleDate: Date?, restart: Bool) async -> String?
 
-    /// Push fresh content (payload/appearance edits, renewed stale date) into
-    /// the pin's running activity. No-op if none is running.
-    func update(_ pin: Pin, staleDate: Date) async
+    /// End the roster activity outright.
+    func endRoster(dismissal: PinDismissal) async
 
-    /// End the pin's activity.
-    func end(activityID: String, dismissal: PinDismissal) async
-
-    /// The system's view of what's running: pinID → activityID. Used to
-    /// reconcile the store against reality on launch (iOS may have ended
-    /// activities while we weren't running).
-    func currentActivityIDs() -> [UUID: String]
+    /// The running roster activity's id, or nil — used to reconcile the store
+    /// against reality on launch (iOS may have ended it while we weren't running).
+    func rosterActivityID() -> String?
 }

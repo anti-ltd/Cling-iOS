@@ -4,7 +4,7 @@
  stale, a local notification offers to keep it alive. Tapping it (or its
  "Keep pinned" action) opens the app, which re-requests the activity and
  reschedules. Pins the user foregrounds the app for renew silently without
- ever seeing the notification (see `AppModel.renewExpiringPins`).
+ ever seeing the notification (see `AppModel.foregroundSync`).
  */
 import Foundation
 import UserNotifications
@@ -73,6 +73,10 @@ final class RenewalScheduler {
         case .note:    "Your note is about to leave the Dynamic Island. Tap to keep it alive."
         case .timer:   "Your timer outlives the 8-hour pin limit. Tap to keep it counting."
         case .decor:   "Your decoration is about to leave the Dynamic Island. Tap to keep it up."
+        case .match:   "The match is about to leave the Dynamic Island. Tap to keep the score live."
+        case .fight:   "The fight is about to leave the Dynamic Island. Tap to keep the card live."
+        case .game:    "The game is about to leave the Dynamic Island. Tap to keep the score live."
+        case .ticker:  "Your ticker is about to leave the Dynamic Island. Tap to keep the price live."
         }
     }
 
@@ -108,8 +112,8 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        // If the user is already in the app, foreground renewal has happened;
-        // showing the banner anyway would be noise.
+        // Renewal banners stay silent in foreground (foreground renewal already
+        // happened — a banner would just be noise).
         []
     }
 }

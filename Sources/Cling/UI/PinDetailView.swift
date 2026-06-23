@@ -35,7 +35,7 @@ struct PinDetailView: View {
                 Button(role: .destructive) {
                     model.delete(pin)
                     #if canImport(UIKit)
-                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    Haptics.success()
                     #endif
                     dismiss()
                 } label: {
@@ -76,10 +76,10 @@ struct PinDetailView: View {
                                accent: pin.appearance.accentGradient) {
                 #if canImport(UIKit)
                 UIPasteboard.general.string = note.text
-                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                Haptics.success()
                 #endif
             }
-        case .note, .timer, .decor:
+        case .note, .timer, .decor, .match, .fight, .game, .ticker:
             EmptyView()
         }
     }
@@ -88,7 +88,7 @@ struct PinDetailView: View {
 
     @ViewBuilder private var typeExtras: some View {
         if case .parking(let parking) = pin.payload {
-            CardSection("Where") {
+            CardSection("Where", accentRule: true) {
                 MapSnippet(
                     coordinate: CLLocationCoordinate2D(
                         latitude: parking.latitude, longitude: parking.longitude),
@@ -97,6 +97,21 @@ struct PinDetailView: View {
                     .clipShape(RoundedRectangle(cornerRadius: UX.Glass.tileRadius, style: .continuous))
                     .padding(.vertical, UX.rowVPadding)
             }
+        }
+        if case .game(let game) = pin.payload {
+            RecentFormSection(
+                leaguePath: game.league,
+                homeKey: game.homeAbbr, homeLabel: game.homeAbbr,
+                awayKey: game.awayAbbr, awayLabel: game.awayAbbr,
+                reloadID: game.sourceID)
+        }
+        if case .match(let match) = pin.payload {
+            CommentarySection(leaguePath: match.league, eventID: match.sourceID)
+            RecentFormSection(
+                leaguePath: match.league,
+                homeKey: match.homeCode, homeLabel: match.homeLabel,
+                awayKey: match.awayCode, awayLabel: match.awayLabel,
+                reloadID: match.sourceID)
         }
     }
 
@@ -200,5 +215,202 @@ struct AccentActionButton: View {
                 }
         }
         .buttonStyle(.glassBloom)
+    }
+}
+
+// MARK: - Commentary timeline
+
+/// A match's play-by-play, pulled from ESPN when the detail opens. The Live
+/// Activity carries only the latest line (4KB push budget); this is the full
+/// history, newest first. In-app only — hides itself when the feed has nothing
+/// (a hand-made match with no fixture, no commentary yet, or no network).
+private struct CommentarySection: View {
+    let leaguePath: String
+    /// ESPN event id; nil for a hand-made match → nothing to fetch.
+    let eventID: String?
+
+    @State private var entries: [CommentaryEntry] = []
+    @State private var phase: Phase = .loading
+
+    private enum Phase { case loading, loaded, empty }
+
+    var body: some View {
+        switch phase {
+        case .loading:
+            CardSection("Commentary", accentRule: true) {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 18)
+            }
+            .task(id: eventID) { await load() }
+        case .loaded:
+            CardSection("Commentary", accentRule: true) {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                        if index > 0 { Divider() }
+                        row(entry)
+                    }
+                }
+            }
+        case .empty:
+            EmptyView()
+        }
+    }
+
+    private func row(_ e: CommentaryEntry) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon(e.kind))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(tint(e.kind))
+                .frame(width: 18)
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(e.text)
+                    .font(.footnote)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !e.minute.isEmpty {
+                    Text(e.minute)
+                        .font(.caption2.weight(.medium).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 9)
+    }
+
+    private func icon(_ k: CommentaryEntry.Kind) -> String {
+        switch k {
+        case .goal:         "soccerball.inverse"
+        case .card:         "rectangle.portrait.fill"
+        case .substitution: "arrow.left.arrow.right"
+        case .penalty:      "scope"
+        case .whistle:      "flag.checkered"
+        case .other:        "circle.fill"
+        }
+    }
+
+    private func tint(_ k: CommentaryEntry.Kind) -> Color {
+        switch k {
+        case .goal:         .green
+        case .card:         .yellow
+        case .substitution: .blue
+        case .penalty:      .orange
+        case .whistle:      .gray
+        case .other:        .gray.opacity(0.5)
+        }
+    }
+
+    private func load() async {
+        phase = .loading
+        let list = (try? await MatchCommentary.fetch(leaguePath: leaguePath, eventID: eventID ?? "")) ?? []
+        entries = list
+        phase = list.isEmpty ? .empty : .loaded
+    }
+}
+
+// MARK: - Recent form
+
+/// The two sides' last few results, pulled from each team's schedule when the
+/// pin detail opens. Serves both team games (NBA/NFL/NHL/MLB, keyed by league
+/// abbreviation) and World Cup matches (keyed by FIFA code) — the ESPN schedule
+/// endpoint takes either. In-app only: keeps the lock-screen pin lean while the
+/// detail screen carries the history, and hides itself when the feed has nothing
+/// (off-season, an unknown code, or no network).
+private struct RecentFormSection: View {
+    let leaguePath: String
+    let homeKey: String
+    let homeLabel: String
+    let awayKey: String
+    let awayLabel: String
+    /// Re-fetch when the tracked fixture changes.
+    let reloadID: String?
+
+    @State private var home: [TeamResult] = []
+    @State private var away: [TeamResult] = []
+    @State private var phase: Phase = .loading
+
+    private enum Phase { case loading, loaded, empty }
+
+    var body: some View {
+        switch phase {
+        case .loading:
+            CardSection("Recent form", accentRule: true) {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 18)
+            }
+            .task(id: reloadID) { await load() }
+        case .loaded:
+            CardSection("Recent form", accentRule: true) {
+                teamForm(label: homeLabel, results: home)
+                if !home.isEmpty && !away.isEmpty { Divider() }
+                teamForm(label: awayLabel, results: away)
+            }
+        case .empty:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder private func teamForm(label: String, results: [TeamResult]) -> some View {
+        if !results.isEmpty {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    Text(label).font(.subheadline.weight(.semibold)).lineLimit(1)
+                    Spacer(minLength: 8)
+                    Text(record(results))
+                        .font(.caption.weight(.medium).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 10)
+                ForEach(results) { r in
+                    Divider()
+                    resultRow(r)
+                }
+            }
+        }
+    }
+
+    private func resultRow(_ r: TeamResult) -> some View {
+        HStack(spacing: 8) {
+            Text(r.matchup).font(.footnote.weight(.medium))
+            Spacer(minLength: 8)
+            Text(r.date.formatted(.dateTime.month(.abbreviated).day()))
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+            Text(r.scoreLine)
+                .font(.footnote.weight(.semibold).monospacedDigit())
+                .foregroundStyle(color(r.outcome))
+                .frame(minWidth: 76, alignment: .trailing)
+        }
+        .padding(.vertical, 9)
+    }
+
+    private func color(_ outcome: Outcome) -> Color {
+        switch outcome {
+        case .win:  .green
+        case .draw: .gray
+        case .loss: .red
+        }
+    }
+
+    /// Record over the fetched window — "3–2", or "2–1–2" once draws appear.
+    private func record(_ results: [TeamResult]) -> String {
+        let w = results.filter { $0.outcome == .win }.count
+        let d = results.filter { $0.outcome == .draw }.count
+        let l = results.filter { $0.outcome == .loss }.count
+        return d > 0 ? "\(w)–\(d)–\(l)" : "\(w)–\(l)"
+    }
+
+    private func load() async {
+        phase = .loading
+        async let h = try? TeamFormFeed.recent(leaguePath: leaguePath, teamAbbr: homeKey)
+        async let a = try? TeamFormFeed.recent(leaguePath: leaguePath, teamAbbr: awayKey)
+        let homeResults = await h ?? []
+        let awayResults = await a ?? []
+        home = homeResults
+        away = awayResults
+        phase = (homeResults.isEmpty && awayResults.isEmpty) ? .empty : .loaded
     }
 }

@@ -35,27 +35,7 @@ public enum TimerPinModule: PinModule {
 
     public static func listRow(_ pin: Pin) -> AnyView {
         let timer = payload(pin.payload)
-        return AnyView(
-            HStack(spacing: 12) {
-                PinGlyph(appearance: pin.appearance)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(timer?.label.isEmpty == false ? timer!.label : "Timer")
-                        .font(.body)
-                    if let timer {
-                        Group {
-                            if timer.endDate > .now {
-                                CountdownText(from: timer.startDate, until: timer.endDate)
-                            } else {
-                                Text("done")
-                            }
-                        }
-                        .font(.subheadline.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                    }
-                }
-                Spacer(minLength: 0)
-            }
-        )
+        return AnyView(TimerListRow(timer: timer, appearance: pin.appearance))
     }
 
     // MARK: Live Activity
@@ -223,6 +203,7 @@ public enum TimerPinModule: PinModule {
                     .font(.system(.body, design: .rounded).weight(.semibold))
                     .monospacedDigit()
                     .foregroundStyle(ctx.accent)
+                    .fixedSize()
             }
         )
     }

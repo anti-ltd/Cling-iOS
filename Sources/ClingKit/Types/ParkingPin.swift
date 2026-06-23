@@ -36,7 +36,6 @@ public enum ParkingPinModule: PinModule {
         let parking = payload(pin.payload)
         return AnyView(
             HStack(spacing: 12) {
-                PinGlyph(appearance: pin.appearance)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(parking?.displayTitle ?? "Parked")
                         .font(.body)
@@ -148,6 +147,10 @@ public enum ParkingPinModule: PinModule {
         }
         return AnyView(thumb(filename, size: 28))
     }
+
+    /// The row carries its own Walk `Link`, so the roster must not wrap it in an
+    /// outer link — nested interactive controls blank the whole Live Activity.
+    public static let liveRowHasInlineAction = true
 
     public static func liveRow(_ ctx: PinRenderContext) -> AnyView {
         guard let parking = payload(ctx.payload) else { return AnyView(EmptyView()) }

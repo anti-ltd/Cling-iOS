@@ -1,0 +1,8 @@
+{
+  "images" : [
+    { "idiom" : "universal", "scale" : "1x", "filename" : "MAR@1x.png" },
+    { "idiom" : "universal", "scale" : "2x", "filename" : "MAR@2x.png" },
+    { "idiom" : "universal", "scale" : "3x", "filename" : "MAR@3x.png" }
+  ],
+  "info" : { "author" : "xcode", "version" : 1 }
+}

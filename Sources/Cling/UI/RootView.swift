@@ -21,7 +21,8 @@ struct RootView: View {
                 AmbientBackdrop(tints: model.backdropTints)
                     .ignoresSafeArea()
                     .animation(UX.Motion.morph, value: model.backdropTints)
-                PinListView(onAdd: { showComposer = true })
+                PinListView(onAdd: { showComposer = true },
+                            onOpen: { path.append($0) })
             }
             .navigationTitle("Cling")
             .navigationBarTitleDisplayMode(.inline)
@@ -60,13 +61,22 @@ struct RootView: View {
             PinBuilderView()
                 .glassSheet()
         }
+        // While Cling is foreground, keep pinned live scores current. The guard
+        // inside skips the network unless a match is actually pinned; the push
+        // server (Phase 3) carries the island when Cling is closed.
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
+            while !Task.isCancelled {
+                await model.refreshLiveSports()
+                try? await Task.sleep(for: .seconds(25))
+            }
+        }
         .onChange(of: scenePhase) { _, phase in
             // The share extension may have written pins while we were away;
-            // pending pins can only be activated by this process.
+            // pending pins can only be activated by this process. One call pulls
+            // them in and rebuilds the roster (renewing if anything's due).
             if phase == .active {
-                model.reloadPins()
-                model.sweepPendingPins()
-                model.renewExpiringPins()
+                model.foregroundSync()
             }
         }
         .onOpenURL { url in

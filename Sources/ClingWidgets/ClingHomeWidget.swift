@@ -33,25 +33,41 @@ struct HomeProvider: TimelineProvider {
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<HomeEntry>) -> Void) {
-        let entry = currentEntry()
-        // Wake at the soonest future stale date so a pin's status flips exactly
-        // when it expires; otherwise check back in an hour. WidgetCenter reloads
-        // from the app cover every interactive change in between.
-        let nextStale = entry.pins
-            .compactMap(\.staleDate)
-            .filter { $0 > entry.date }
-            .min()
-        let refresh = nextStale ?? entry.date.addingTimeInterval(60 * 60)
-        completion(Timeline(entries: [entry], policy: .after(refresh)))
+        let pins = activePins()
+        let now = Date.now
+
+        // A timer pin draws a progress ring around its badge. WidgetKit has no
+        // self-ticking circular timer, so step the timeline: a handful of future
+        // entries per active timer advance the ring without the app running.
+        // Capped (≤24 ticks/timer, ≤60 total) to stay inside the reload budget.
+        var dates: Set<Date> = [now]
+        for case .timer(let t) in pins.map(\.payload) where t.endDate > now {
+            let span = t.endDate.timeIntervalSince(now)
+            let step = max(span / 24, 60)
+            var d = now.addingTimeInterval(step)
+            while d < t.endDate { dates.insert(d); d.addTimeInterval(step) }
+            dates.insert(t.endDate)
+        }
+        // Stale flips (a "Pinned" badge → "Expired") deserve an entry too.
+        for stale in pins.compactMap(\.staleDate) where stale > now { dates.insert(stale) }
+
+        let ordered = dates.sorted().prefix(60)
+        let entries = ordered.map { HomeEntry(date: $0, pins: pins) }
+        // Refresh after the last entry, or in an hour if nothing's pending.
+        let refresh = ordered.last?.addingTimeInterval(60) ?? now.addingTimeInterval(60 * 60)
+        completion(Timeline(entries: entries, policy: .after(refresh)))
+    }
+
+    private func currentEntry() -> HomeEntry {
+        HomeEntry(date: .now, pins: activePins())
     }
 
     /// The current board: everything not fully ended, newest first — the same
     /// rule as the app's `activePins`.
-    private func currentEntry() -> HomeEntry {
-        let pins = ClingStore.shared.loadPins()
+    private func activePins() -> [Pin] {
+        ClingStore.shared.loadPins()
             .filter { $0.status != .ended }
             .sorted { $0.createdAt > $1.createdAt }
-        return HomeEntry(date: .now, pins: pins)
     }
 }
 
@@ -89,7 +105,7 @@ private struct HomeWidgetView: View {
         } else if family == .systemSmall && entry.pins.count > 1 {
             // More than one pin in the small tile: a notification card can only
             // hold one, so show the pins as their badges in an app-library grid.
-            GlyphLibrary(pins: Array(entry.pins.prefix(9)), total: entry.pins.count)
+            GlyphLibrary(pins: Array(entry.pins.prefix(9)), total: entry.pins.count, now: entry.date)
         } else {
             ListHome(pins: Array(entry.pins.prefix(capacity)), total: entry.pins.count)
         }
@@ -113,6 +129,7 @@ private struct HomeWidgetView: View {
 private struct GlyphLibrary: View {
     let pins: [Pin]
     let total: Int
+    let now: Date
 
     private var columnCount: Int { pins.count <= 4 ? 2 : 3 }
     private var glyphSize: CGFloat { pins.count <= 4 ? 56 : 38 }
@@ -123,7 +140,7 @@ private struct GlyphLibrary: View {
         LazyVGrid(columns: columns, spacing: 10) {
             ForEach(pins) { pin in
                 Link(destination: DeepLink.pin(pin.id).url) {
-                    WidgetGlyph(appearance: pin.appearance, size: glyphSize)
+                    GlyphBadge(pin: pin, size: glyphSize, now: now)
                 }
             }
         }
@@ -230,7 +247,7 @@ private struct PinCard: View {
 
     private var text: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(pinTitle(pin))
+            PinHeadline(pin: pin, fills: fills)
                 .font(.headline)
                 .lineLimit(fills ? 3 : 1)
                 .minimumScaleFactor(0.8)
@@ -273,6 +290,40 @@ private struct EmptyHome: View {
 // white blobs. So the widget's rows draw their own glyph and status that adapt
 // to the active rendering mode, instead of reusing the app's full-colour
 // `listRow` / `ExpiryBadge`.
+
+/// A pin's badge in the app-library grid. For a running timer it wears a
+/// countdown ring around the icon — the arc depletes as the timer runs down.
+/// The ring is drawn at `now` (the timeline entry's date); the provider seeds
+/// future entries so it advances on its own.
+private struct GlyphBadge: View {
+    let pin: Pin
+    let size: CGFloat
+    let now: Date
+
+    var body: some View {
+        let glyph = WidgetGlyph(appearance: pin.appearance, size: size)
+        if case .timer(let t) = pin.payload, t.endDate > t.startDate {
+            let span = t.endDate.timeIntervalSince(t.startDate)
+            let elapsed = now.timeIntervalSince(t.startDate)
+            let remaining = max(0, min(1, 1 - elapsed / span))
+            glyph
+                .padding(size * 0.13)            // gap so the ring clears the icon
+                .overlay {
+                    let ring = Circle().inset(by: 1.5)
+                    let w = max(2.5, size * 0.07)
+                    ZStack {
+                        ring.stroke(.white.opacity(0.16), lineWidth: w)
+                        ring.trim(from: 0, to: remaining)
+                            .stroke(pin.appearance.accent.color,
+                                    style: StrokeStyle(lineWidth: w, lineCap: .round))
+                            .rotationEffect(.degrees(-90))
+                    }
+                }
+        } else {
+            glyph.padding(size * 0.13)   // match the ring inset so badges align
+        }
+    }
+}
 
 /// The pin's badge. In full colour it's the app's vivid glyph; in vibrant /
 /// accented modes it drops to a high-contrast symbol on a faint chip so it
@@ -364,11 +415,53 @@ private struct PinSubtitle: View {
             }
         case .decor:
             EmptyView()
+        case .match(let m):
+            // Live minute self-ticks via `.timer` so the widget advances it
+            // between timeline reloads instead of freezing on the saved value.
+            (SportsLockScreen.liveClockText(m).map { Text("\(m.scoreText) · ") + $0 }
+                ?? Text("\(m.scoreText) · \(m.statusLine())"))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        case .fight(let f):
+            Text("\(f.redLast) vs \(f.blueLast) · \(f.statusLine())")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        case .game(let g):
+            Text("\(g.scoreText) · \(g.statusLine())")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        case .ticker(let t):
+            Text("\(t.priceText) · \(t.changePercentText)")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
     }
 }
 
-/// The pin's headline, per type.
+/// The pin's headline. Matches draw real round flags beside the codes (the
+/// widget bundles `Flags.xcassets`); every other type is a plain string title.
+private struct PinHeadline: View {
+    let pin: Pin
+    let fills: Bool
+
+    var body: some View {
+        if case .match(let m) = pin.payload {
+            HStack(spacing: 5) {
+                FlagImage(m.homeCode, size: 18)
+                Text("\(m.homeCode) \(m.scoreText) \(m.awayCode)").monospacedDigit()
+                FlagImage(m.awayCode, size: 18)
+            }
+        } else {
+            Text(pinTitle(pin))
+        }
+    }
+}
+
+/// The pin's headline string, per type (the non-match fallback for `PinHeadline`).
 private func pinTitle(_ pin: Pin) -> String {
     switch pin.payload {
     case .note(let n):
@@ -380,6 +473,10 @@ private func pinTitle(_ pin: Pin) -> String {
     case .timer(let t):     t.label.isEmpty ? "Timer" : t.label
     case .parking(let p):   p.displayTitle
     case .decor(let d):     d.displayLabel ?? "Decoration"
+    case .match(let m):     "\(m.homeCode) \(m.scoreText) \(m.awayCode)"
+    case .fight(let f):     "\(f.redLast) vs \(f.blueLast)"
+    case .game(let g):      "\(g.homeAbbr) \(g.scoreText) \(g.awayAbbr)"
+    case .ticker(let t):    "\(t.symbol) \(t.priceText)"
     }
 }
 

@@ -63,14 +63,15 @@ final class PushToStartRegistrar {
     }
 
     private func observeUpdateToken(of activity: Activity<ClingActivityAttributes>) {
-        let pinID = activity.attributes.pinID
+        // One roster activity → one update token; a server pushes the whole
+        // refreshed content state to it.
         Task { @MainActor in
             for await tokenData in activity.pushTokenUpdates {
-                tokens.setUpdateToken(Self.hex(tokenData), for: pinID)
+                tokens.setRosterUpdateToken(Self.hex(tokenData))
                 onTokensChanged?(tokens.load())
             }
             // Stream finishing means the activity ended — drop its stale token.
-            tokens.removeUpdateToken(for: pinID)
+            tokens.removeRosterUpdateToken()
             onTokensChanged?(tokens.load())
         }
     }

@@ -45,3 +45,9 @@ Icon
 
 # Logs
 *.log
+
+# Node / Cloudflare Worker (server/)
+node_modules/
+.wrangler/
+.dev.vars
+dist/

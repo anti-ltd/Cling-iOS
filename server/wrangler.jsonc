@@ -1,0 +1,39 @@
+{
+  // The Cling push server: polls the ESPN scoreboard (football / UFC / US
+  // leagues) and Finnhub quotes, pushing Live Activity updates to subscribed
+  // devices over APNs, so a pinned match or ticker stays live in the Dynamic
+  // Island while Cling is closed.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cling-push",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-06-01",
+  "observability": { "enabled": true },
+
+  // One singleton Durable Object runs the poll loop + holds subscriptions.
+  "durable_objects": {
+    "bindings": [
+      { "name": "POLLER", "class_name": "MatchPoller" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["MatchPoller"] }
+  ],
+
+  // Non-secret config — mirrors the proven Clack-Worker setup (same Apple team,
+  // same token-based APNs key, which signs push for any app under the team).
+  // The private key itself is the ONLY secret: `wrangler secret put APNS_KEY`
+  // (paste the contents of AuthKey_L8R4WR557T.p8).
+  "vars": {
+    "APNS_KEY_ID": "L8R4WR557T",
+    "APNS_TEAM_ID": "8248296AJX",
+    // TestFlight / App Store builds use production push tokens — api.push.apple.com.
+    // `make device` is a Debug build with aps-environment=development → SANDBOX
+    // tokens, which only the sandbox host accepts (production → 400 BadDeviceToken,
+    // every push dropped). Match the host to the build you're running.
+    "APNS_HOST": "api.sandbox.push.apple.com"
+  }
+
+  // Market quote secret (Finnhub, stocks + crypto). Set with:
+  //   wrangler secret put FINNHUB_KEY
+  // Without it ticker pins resolve to nothing and stay "Fetching quote…".
+}

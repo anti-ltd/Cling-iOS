@@ -2,9 +2,11 @@
 //
 // RenderAppIcon.swift — renders the Cling iOS app icon into the asset catalog.
 //
-// Cling's mark is a **glossy 3D disc** — a domed violet-glass button on the
-// luminous indigo field, with a crisp white push pin embossed on its face.
-// Same indigo family and lighting as Clink's keycap, a different body.
+// Cling's mark is a **glossy 3D disc** — a domed white-glass button on the
+// luminous indigo field, with a push pin molded into its face: an engraved
+// base under a vivid violet→indigo gradient and glossy sheen, so the field's
+// colour pops luminously through the glyph. Same material, lighting and molded-
+// legend treatment as Clink's keycap "C" and Aware's shield disc.
 //
 // iOS specifics, both required:
 //   • the background is drawn full-bleed and fully opaque (no squircle clip,
@@ -35,27 +37,52 @@ func renderPNG(size: CGFloat, mode: String) -> Data? {
     return rep.representation(using: .png, properties: [:])
 }
 
-// Render `pin.fill` as a white-on-clear alpha mask of side `box`, centred at
-// `center` on the canvas — used as a clip stencil to emboss the glyph.
-func pinMask(canvas: CGFloat, box: CGFloat, center: CGPoint) -> CGImage? {
-    let px = Int(canvas)
-    guard let rep = NSBitmapImageRep(
-        bitmapDataPlanes: nil, pixelsWide: px, pixelsHigh: px,
-        bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-        colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
-          let g = NSGraphicsContext(bitmapImageRep: rep) else { return nil }
+// Draw `pin.fill` (point size `box`, centred at `center`) flat-filled with
+// `fill` straight onto the current context. Drawn as a tinted NSImage so the
+// glyph keeps Core Graphics' native antialiasing — mirrors Aware's `drawSymbol`.
+// Used for the engraved base whose drop-shadow halo reads the pin as inset.
+func drawPin(box: CGFloat, center: CGPoint, fill: NSColor) {
     let cfg = NSImage.SymbolConfiguration(pointSize: box, weight: .semibold)
     guard let sym = NSImage(systemSymbolName: "pin.fill", accessibilityDescription: nil)?
-        .withSymbolConfiguration(cfg) else { return nil }
+        .withSymbolConfiguration(cfg) else { return }
     let s = sym.size
-    let r = CGRect(x: center.x - s.width / 2, y: center.y - s.height / 2, width: s.width, height: s.height)
-    NSGraphicsContext.saveGraphicsState()
-    NSGraphicsContext.current = g
-    NSColor.white.set()
+    let tinted = NSImage(size: s)
+    tinted.lockFocus()
+    fill.set()
+    let r = NSRect(origin: .zero, size: s)
     sym.draw(in: r)
     r.fill(using: .sourceAtop)
-    NSGraphicsContext.restoreGraphicsState()
-    return rep.cgImage
+    tinted.unlockFocus()
+    tinted.draw(at: NSPoint(x: center.x - s.width / 2, y: center.y - s.height / 2),
+                from: NSRect(origin: .zero, size: s), operation: .sourceOver, fraction: 1.0)
+}
+
+// Draw `pin.fill` filled with a luminous diagonal gradient (`fillStops`, first
+// colour at the top) plus a glossy top sheen, so the glyph pops off the glass
+// like a molded, back-lit legend (cf. Clink's indigo "C", Aware's teal shield).
+// Fill and sheen are composited `.sourceAtop` inside an offscreen the shape of
+// the glyph, so both stay clipped to the pin with no stray edges.
+func drawPinGradient(box: CGFloat, center: CGPoint,
+                     fillStops: [(NSColor, CGFloat)], sheenTopAlpha: CGFloat) {
+    let cfg = NSImage.SymbolConfiguration(pointSize: box, weight: .semibold)
+    guard let sym = NSImage(systemSymbolName: "pin.fill", accessibilityDescription: nil)?
+        .withSymbolConfiguration(cfg) else { return }
+    let s = sym.size
+    let img = NSImage(size: s)
+    img.lockFocus()
+    let r = NSRect(origin: .zero, size: s)
+    NSColor.black.set()
+    sym.draw(in: r)                                   // establish the shape + alpha
+    NSGraphicsContext.current?.compositingOperation = .sourceAtop
+    NSGradient(colors: fillStops.map { $0.0 },
+               atLocations: fillStops.map { $0.1 }, colorSpace: .sRGB)!
+        .draw(in: r, angle: -90)                       // first stop at top, descending
+    NSGradient(colors: [NSColor(white: 1, alpha: sheenTopAlpha), NSColor(white: 1, alpha: 0)],
+               atLocations: [0, 0.5], colorSpace: .sRGB)!
+        .draw(in: r, angle: -90)                       // glossy upper sheen, fades by mid
+    img.unlockFocus()
+    img.draw(at: NSPoint(x: center.x - s.width / 2, y: center.y - s.height / 2),
+             from: r, operation: .sourceOver, fraction: 1.0)
 }
 
 func draw(in cg: CGContext, size: CGFloat, mode: String) {
@@ -69,7 +96,6 @@ func draw(in cg: CGContext, size: CGFloat, mode: String) {
         CGGradient(colorsSpace: space, colors: stops.map { $0.0 } as CFArray,
                    locations: stops.map { $0.1 })!
     }
-    let rect = CGRect(x: 0, y: 0, width: size, height: size)
 
     // ── The luminous indigo field — painted as the background, and again
     //    through the pin cutout so the glyph reveals the field (Clink's "C"). ──
@@ -176,35 +202,35 @@ func draw(in cg: CGContext, size: CGFloat, mode: String) {
                           end: CGPoint(x: discC.x, y: discC.y), options: [])
     cg.restoreGState()
 
-    // ── Pin glyph, knocked out of the disc — the field shows through it, the
-    //    way Clink's "C" reveals the gradient behind the keycap. ───────────────
+    // ── Pin glyph, molded into the disc face. Tinted → flat mid-grey so iOS maps
+    //    its tint cleanly; light/dark → an engraved drop-shadow base under a
+    //    vivid indigo→violet diagonal gradient + glossy sheen, so the field's
+    //    colour pops luminously through the mark (cf. Clink's "C", Aware's
+    //    shield). ────────────────────────────────────────────────────────────
     let glyphBox = discR * 0.95
-    guard let pin = pinMask(canvas: size, box: glyphBox, center: discC) else { return }
-    func clipPin(dy: CGFloat = 0) {
-        // dy > 0 shifts the glyph up; dy < 0 shifts it down.
-        cg.clip(to: CGRect(x: 0, y: dy, width: size, height: size), mask: pin)
-    }
-
-    if isDark || isTinted {
-        // The dark/tinted fields are near-black, so a cutout would vanish — fill
-        // the glyph instead, like Clink's dark "C": cool-white on the graphite
-        // face, mid-grey when tinted (so iOS can tint it).
-        let fill = isDark
-            ? grad([(rgb(0.98, 0.99, 1.00), 0), (rgb(0.82, 0.86, 0.96), 1)])
-            : grad([(rgb(0.46, 0.46, 0.46), 0), (rgb(0.34, 0.34, 0.34), 1)])
-        cg.saveGState()
-        clipPin()
-        cg.drawLinearGradient(fill,
-                              start: CGPoint(x: 0, y: discC.y + glyphBox * 0.5),
-                              end: CGPoint(x: 0, y: discC.y - glyphBox * 0.5),
-                              options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
-        cg.restoreGState()
+    if isTinted {
+        // Flat mid-grey so iOS maps its single tint over it cleanly.
+        drawPin(box: glyphBox, center: discC, fill: NSColor(white: 0.40, alpha: 1))
     } else {
-        // Light mode: cutout — re-paint the bright field through the pin shape.
+        // Engraved drop-shadow so the pin reads as inset into the glass.
         cg.saveGState()
-        clipPin()
-        drawField()
+        cg.setShadow(offset: CGSize(width: 0, height: -size * 0.004), blur: size * 0.012,
+                     color: isDark ? rgb(0, 0, 0, 0.55) : rgb(0.10, 0.14, 0.30, 0.45))
+        let base: NSColor = isDark ? NSColor(srgbRed: 0.05, green: 0.06, blue: 0.12, alpha: 1)
+                                   : NSColor(srgbRed: 0.20, green: 0.26, blue: 0.52, alpha: 1)
+        drawPin(box: glyphBox, center: discC, fill: base)
         cg.restoreGState()
+
+        // Vivid saturated violet→indigo→deep-blue diagonal + glossy sheen.
+        let fillStops: [(NSColor, CGFloat)] = isDark
+            ? [(NSColor(srgbRed: 0.62, green: 0.50, blue: 1.00, alpha: 1), 0),    // bright violet
+               (NSColor(srgbRed: 0.40, green: 0.40, blue: 0.95, alpha: 1), 0.5), // electric indigo
+               (NSColor(srgbRed: 0.20, green: 0.26, blue: 0.70, alpha: 1), 1)]   // deep blue
+            : [(NSColor(srgbRed: 0.50, green: 0.32, blue: 0.98, alpha: 1), 0),    // bright violet
+               (NSColor(srgbRed: 0.28, green: 0.30, blue: 0.92, alpha: 1), 0.5), // electric indigo
+               (NSColor(srgbRed: 0.12, green: 0.20, blue: 0.74, alpha: 1), 1)]   // deep blue
+        drawPinGradient(box: glyphBox, center: discC,
+                        fillStops: fillStops, sheenTopAlpha: isDark ? 0.18 : 0.30)
     }
 }
 

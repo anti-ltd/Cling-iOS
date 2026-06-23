@@ -30,7 +30,7 @@ struct LockScreenStage: View {
             module.lockScreen(context)
                 .padding(.horizontal, 16)
                 .padding(.vertical, appearance.density == .compact ? 12 : 16)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity)
                 .background(activitySurface)
                 .overlay(borderOverlay)
                 .padding(.horizontal, 14)

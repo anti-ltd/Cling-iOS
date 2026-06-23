@@ -20,16 +20,12 @@ struct AppearanceEditor: View {
     /// The payload driving the preview — the pin's own, or a sample.
     let previewPayload: PinPayload
     @Binding var appearance: PinAppearance
-    /// The house style overlaid on the preview, so this screen shows the pin
-    /// exactly as it'll render (surface/type/density/border come from here, not
-    /// from the per-type fields being edited below).
-    var globalStyle: GlobalPinStyle = .default
 
     var body: some View {
         VStack(spacing: UX.cardSpacing) {
-            CardSection("Preview") {
+            CardSection("Preview", accentRule: true) {
                 PinPreviewCard(typeID: typeID, payload: previewPayload,
-                               appearance: appearance, globalStyle: globalStyle)
+                               appearance: appearance)
                     .padding(.vertical, UX.rowVPadding)
             }
             AppearanceControls(typeID: typeID, appearance: $appearance)
@@ -45,16 +41,9 @@ struct PinPreviewCard: View {
     let typeID: PinTypeID
     let payload: PinPayload
     let appearance: PinAppearance
-    /// The house style to dress the preview in. Defaults to the shipped style
-    /// so callers without settings still render something sane.
-    var globalStyle: GlobalPinStyle = .default
-
-    /// What the pin actually renders with: the per-type accent + glyph being
-    /// edited, dressed in the global house style.
-    private var effective: PinAppearance { globalStyle.apply(to: appearance) }
 
     private var context: PinRenderContext {
-        PinRenderContext(pinID: UUID(), payload: payload, appearance: effective)
+        PinRenderContext(pinID: UUID(), payload: payload, appearance: appearance)
     }
 
     var body: some View {
@@ -62,24 +51,31 @@ struct PinPreviewCard: View {
         VStack(spacing: 14) {
             // The pin on its lock-screen stage — the real renderer, the real
             // surface. Tuning the controls below morphs this live.
-            LockScreenStage(typeID: typeID, payload: payload, appearance: effective)
+            LockScreenStage(typeID: typeID, payload: payload, appearance: appearance)
 
-            // And the compact Dynamic Island, as iOS composes it.
-            HStack(spacing: 8) {
+            // Compact Dynamic Island — the real compact/minimal renderers, not a
+            // mock, so tuning appearance shows exactly what lands in the pill.
+            HStack(spacing: 0) {
                 module.diCompactLeading(context)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 Capsule()
-                    .fill(.black)
-                    .frame(width: 36, height: 24)
+                    .fill(.black.opacity(0.85))
+                    .frame(width: 36, height: 26)
                 module.diCompactTrailing(context)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
             .background(Capsule().fill(.black))
+            .overlay {
+                Capsule()
+                    .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
+            }
             .environment(\.colorScheme, .dark)
-            .fontDesign(effective.fontDesign.design)
+            .fontDesign(appearance.fontDesign.design)
         }
         .frame(maxWidth: .infinity)
-        .animation(UX.Motion.morph, value: effective)
+        .animation(UX.Motion.morph, value: appearance)
     }
 }
 
@@ -100,7 +96,7 @@ struct AppearanceControls: View {
     }
 
     private var colorSection: some View {
-        CardSection("Color") {
+        CardSection("Color", accentRule: true) {
             VStack(alignment: .leading, spacing: 12) {
                 swatchRow(
                     selected: appearance.accent,
@@ -207,7 +203,7 @@ struct AppearanceControls: View {
     }
 
     private var iconSection: some View {
-        CardSection("Icon") {
+        CardSection("Icon", accentRule: true) {
             FlowLayout(spacing: 8, lineSpacing: 8) {
                 ForEach(PinRegistry.module(for: typeID).symbolChoices, id: \.self) { symbol in
                     symbolChip(symbol)
@@ -244,8 +240,35 @@ struct AppearanceControls: View {
     }
 
     private var layoutSection: some View {
-        CardSection("Layout") {
+        CardSection("Layout", accentRule: true) {
             VStack(alignment: .leading, spacing: 10) {
+                Text("Density")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                OptionChips(
+                    options: [("Compact", LayoutDensity.compact), ("Regular", .regular)],
+                    selection: $appearance.density)
+                Text("Surface")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                OptionChips(
+                    options: [("Glass", PinStyle.glass), ("Solid", .solid), ("Outline", .outline)],
+                    selection: $appearance.style)
+                Text("Type")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                OptionChips(
+                    options: [
+                        ("Standard", PinFontDesign.standard), ("Rounded", .rounded),
+                        ("Serif", .serif), ("Mono", .mono),
+                    ],
+                    selection: $appearance.fontDesign)
+                Text("Border")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                OptionChips(
+                    options: [("None", PinBorder.none), ("Hairline", .hairline), ("Accent", .accent)],
+                    selection: $appearance.border)
                 Toggle(isOn: $appearance.showsExpiry) {
                     VStack(alignment: .leading, spacing: 1) {
                         Text("Show expiry time")
@@ -255,13 +278,7 @@ struct AppearanceControls: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                // Surface, type, density and border are shared by every pin —
-                // set once in Settings → Dynamic Island style.
-                Label("Surface, type, density & border are set globally in Settings → Dynamic Island style.",
-                      systemImage: "wand.and.stars")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 4)
+                .padding(.top, 4)
             }
             .padding(.vertical, UX.rowVPadding)
         }
@@ -285,8 +302,7 @@ struct PinAppearanceEditorView: View {
             AppearanceEditor(
                 typeID: pin.typeID,
                 previewPayload: pin.payload,
-                appearance: $appearance,
-                globalStyle: model.settings.globalStyle)
+                appearance: $appearance)
                 .padding(UX.screenPadding)
         }
         .background {
@@ -317,6 +333,28 @@ enum SamplePayloads {
             .parking(ParkingPayload(latitude: 0, longitude: 0, note: "Level 3, row F"))
         case .decor:
             .decor(DecorPayload(label: "On air"))
+        case .match:
+            .match(MatchPayload(
+                homeCode: "ARG", awayCode: "FRA",
+                homeName: "Argentina", awayName: "France",
+                homeScore: 2, awayScore: 1, minute: 67, status: .live,
+                lastEvent: "Messi takes a corner on the right."))
+        case .fight:
+            .fight(FightPayload(
+                eventName: "UFC 300", redName: "Alex Pereira", blueName: "Jamahal Hill",
+                round: 2, clock: "3:24", boutName: "Main Event", status: .live))
+        case .game:
+            .game(TeamGamePayload(
+                sport: .basketball, league: SportLeague.nba.path, leagueName: "NBA",
+                homeAbbr: "LAL", awayAbbr: "BOS",
+                homeScore: 104, awayScore: 98, period: 3, clock: "5:21", status: .live))
+        case .ticker:
+            .ticker(TickerPayload(
+                symbol: "AAPL", market: .stock, name: "Apple Inc.",
+                price: 229.35, change: 1.62, changePercent: 0.71,
+                dayHigh: 230.10, dayLow: 226.80,
+                spark: [226.8, 227.4, 227.1, 228.0, 228.6, 228.2, 229.1, 229.35],
+                state: .open, updatedAt: .now))
         }
     }
 }

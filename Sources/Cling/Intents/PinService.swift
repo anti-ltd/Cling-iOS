@@ -15,22 +15,27 @@ enum PinService {
         let store = ClingStore.shared
         let settings = store.loadSettings()
 
-        var pin = Pin(
+        let newPin = Pin(
             payload: payload,
             endDate: { if case .timer(let t) = payload { t.endDate } else { nil } }(),
-            appearance: settings.defaultAppearance(for: payload.typeID),
+            appearance: settings.styled(settings.defaultAppearance(for: payload.typeID)),
             status: .pending)
 
+        // Add to the full set and rebuild the single roster activity — the new
+        // pin joins the others rather than starting an activity of its own.
         let coordinator = PinActivityCoordinator()
-        pin = await coordinator.activate(pin)
+        var all = store.loadPins()
+        all.append(newPin)
+        let synced = await coordinator.syncRoster(all)
         // notify: a running app instance reloads and shows the new pin.
-        store.upsert(pin)
+        store.savePins(synced, notify: true)
 
-        if pin.status == .live, settings.renewalRemindersEnabled {
+        let result = synced.first { $0.id == newPin.id } ?? newPin
+        if result.status == .live, settings.renewalRemindersEnabled {
             let renewals = RenewalScheduler()
             renewals.registerCategory()
-            renewals.scheduleRenewal(for: pin)
+            renewals.scheduleRenewal(for: result)
         }
-        return pin
+        return result
     }
 }

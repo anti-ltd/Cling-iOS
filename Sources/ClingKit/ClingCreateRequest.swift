@@ -94,8 +94,71 @@ public struct ClingCreateRequest: Equatable, Sendable {
                 note: value("note")))
 
         case .decor:
-            // No required fields — a decoration is glyph + optional caption.
-            payload = .decor(DecorPayload(label: value("label")))
+            // No required fields — a decoration is glyph + optional caption +
+            // optional trailing glyph (the far-side island icon).
+            payload = .decor(DecorPayload(label: value("label"), trailingSymbol: value("trailing")))
+
+        case .match:
+            // home + away codes are required; score/minute/status optional so a
+            // server can seed a scheduled match then push the live numbers.
+            guard let home = value("home"), let away = value("away") else { return nil }
+            payload = .match(MatchPayload(
+                homeCode: home,
+                awayCode: away,
+                homeName: value("homeName") ?? "",
+                awayName: value("awayName") ?? "",
+                homeScore: value("homeScore").flatMap(Int.init) ?? 0,
+                awayScore: value("awayScore").flatMap(Int.init) ?? 0,
+                minute: value("minute").flatMap(Int.init),
+                status: value("status").flatMap(MatchStatus.init(rawValue:)) ?? .scheduled,
+                competition: value("competition") ?? "World Cup"))
+
+        case .fight:
+            // red + blue fighter names required; the rest seeds optionally so a
+            // server can create an upcoming card then push round/clock/result.
+            guard let red = value("red"), let blue = value("blue") else { return nil }
+            payload = .fight(FightPayload(
+                eventName: value("event") ?? "UFC",
+                redName: red,
+                blueName: blue,
+                round: value("round").flatMap(Int.init),
+                clock: value("clock"),
+                boutName: value("bout") ?? "",
+                status: value("status").flatMap(FightStatus.init(rawValue:)) ?? .upcoming,
+                winner: value("winner").flatMap(FightCorner.init(rawValue:)),
+                method: value("method")))
+
+        case .game:
+            // league (nba/nfl/nhl/mlb) + home + away codes required; the live
+            // numbers seed optionally so a server can create a scheduled game
+            // then push the score/period/clock.
+            guard let leagueRaw = value("league"),
+                  let league = SportLeague(rawValue: leagueRaw),
+                  let sport = league.gameSport,
+                  let home = value("home"), let away = value("away") else { return nil }
+            payload = .game(TeamGamePayload(
+                sport: sport,
+                league: league.path,
+                leagueName: league.label,
+                homeAbbr: home,
+                awayAbbr: away,
+                homeScore: value("homeScore").flatMap(Int.init) ?? 0,
+                awayScore: value("awayScore").flatMap(Int.init) ?? 0,
+                period: value("period").flatMap(Int.init),
+                clock: value("clock"),
+                situation: value("situation"),
+                status: value("status").flatMap(GameStatus.init(rawValue:)) ?? .scheduled))
+
+        case .ticker:
+            // Just the symbol (+ optional market=stock|crypto, default stock);
+            // the quote API fills in name, price, change and sparkline.
+            guard let raw = value("symbol") else { return nil }
+            let symbol = TickerPayload.normalizeSymbol(raw)
+            guard symbol.count >= 1 else { return nil }
+            let market = value("market").flatMap(TickerMarket.init(rawValue:)) ?? .stock
+            payload = .ticker(TickerPayload(
+                symbol: symbol, market: market,
+                sourceID: TickerPayload.makeSourceID(market: market, symbol: symbol)))
         }
 
         self.init(
@@ -128,6 +191,41 @@ public struct ClingCreateRequest: Equatable, Sendable {
             if let n = p.note { items.append(.init(name: "note", value: n)) }
         case .decor(let d):
             if let l = d.label { items.append(.init(name: "label", value: l)) }
+            if let t = d.trailingSymbol { items.append(.init(name: "trailing", value: t)) }
+        case .match(let m):
+            items.append(.init(name: "home", value: m.homeCode))
+            items.append(.init(name: "away", value: m.awayCode))
+            if !m.homeName.isEmpty { items.append(.init(name: "homeName", value: m.homeName)) }
+            if !m.awayName.isEmpty { items.append(.init(name: "awayName", value: m.awayName)) }
+            items.append(.init(name: "homeScore", value: String(m.homeScore)))
+            items.append(.init(name: "awayScore", value: String(m.awayScore)))
+            if let min = m.minute { items.append(.init(name: "minute", value: String(min))) }
+            items.append(.init(name: "status", value: m.status.rawValue))
+            items.append(.init(name: "competition", value: m.competition))
+        case .fight(let f):
+            items.append(.init(name: "event", value: f.eventName))
+            items.append(.init(name: "red", value: f.redName))
+            items.append(.init(name: "blue", value: f.blueName))
+            if let r = f.round { items.append(.init(name: "round", value: String(r))) }
+            if let c = f.clock { items.append(.init(name: "clock", value: c)) }
+            if !f.boutName.isEmpty { items.append(.init(name: "bout", value: f.boutName)) }
+            items.append(.init(name: "status", value: f.status.rawValue))
+            if let w = f.winner { items.append(.init(name: "winner", value: w.rawValue)) }
+            if let me = f.method { items.append(.init(name: "method", value: me)) }
+        case .game(let g):
+            let leagueCase = SportLeague.allCases.first { $0.path == g.league }
+            items.append(.init(name: "league", value: leagueCase?.rawValue ?? ""))
+            items.append(.init(name: "home", value: g.homeAbbr))
+            items.append(.init(name: "away", value: g.awayAbbr))
+            items.append(.init(name: "homeScore", value: String(g.homeScore)))
+            items.append(.init(name: "awayScore", value: String(g.awayScore)))
+            if let p = g.period { items.append(.init(name: "period", value: String(p))) }
+            if let c = g.clock { items.append(.init(name: "clock", value: c)) }
+            if let s = g.situation { items.append(.init(name: "situation", value: s)) }
+            items.append(.init(name: "status", value: g.status.rawValue))
+        case .ticker(let t):
+            items.append(.init(name: "symbol", value: t.symbol))
+            items.append(.init(name: "market", value: t.market.rawValue))
         }
         if let source { items.append(.init(name: "from", value: source)) }
         if let xSuccess { items.append(.init(name: "x-success", value: xSuccess.absoluteString)) }

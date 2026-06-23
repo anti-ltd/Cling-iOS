@@ -75,23 +75,7 @@ public enum NotePinModule: PinModule {
     }
 
     public static func listRow(_ pin: Pin) -> AnyView {
-        AnyView(
-            HStack(spacing: 12) {
-                PinGlyph(appearance: pin.appearance)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(text(pin.payload))
-                        .font(.body)
-                        .lineLimit(2)
-                    if let host = sourceHost(pin.payload) {
-                        Text(host)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Spacer(minLength: 0)
-                thumb(pin.payload, size: 40)
-            }
-        )
+        AnyView(NoteListRow(payload: pin.payload, appearance: pin.appearance))
     }
 
     // MARK: Live Activity
@@ -125,6 +109,7 @@ public enum NotePinModule: PinModule {
                 .font(.subheadline)
                 .lineLimit(ctx.density == .compact ? 2 : 3)
                 .multilineTextAlignment(.center)
+                .padding(.top, 8)
         )
     }
 

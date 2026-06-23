@@ -53,14 +53,7 @@ struct PinParkingSpotIntent: AppIntent, LiveActivityIntent, ForegroundContinuabl
     }
 
     private func oneShotFix() async -> CLLocationCoordinate2D? {
-        do {
-            for try await update in CLLocationUpdate.liveUpdates() {
-                if #available(iOS 18.0, *),
-                   update.authorizationDenied || update.authorizationRestricted { return nil }
-                if let location = update.location { return location.coordinate }
-            }
-        } catch {}
-        return nil
+        await LocationFix.coordinate()
     }
 }
 

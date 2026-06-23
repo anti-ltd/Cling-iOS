@@ -59,6 +59,10 @@ targets:
       # Asset catalog must be a source (not a plain resource) so Xcode runs
       # actool over it and produces Assets.car in the bundle.
       - Resources/Assets.xcassets
+      # Round-flag artwork for World Cup match pins, looked up by FIFA code
+      # (see FlagImage). Compiled into every target that renders a match —
+      # the widget draws the Live Activity, so it needs the flags too.
+      - Resources/Flags.xcassets
       # Privacy manifest (required by App Store since May 2024). Lives in a
       # per-target folder so it lands at the bundle root as PrivacyInfo.xcprivacy.
       - Resources/Privacy/App/PrivacyInfo.xcprivacy
@@ -67,21 +71,26 @@ targets:
       properties:
         CFBundleDisplayName: Cling
         CFBundleShortVersionString: "1.0"
-        CFBundleVersion: "2"
+        CFBundleVersion: "12"
         # Export compliance: Cling runs fully offline and implements no
         # encryption of its own. Auto-clears ASC's "Missing Compliance" prompt.
         ITSAppUsesNonExemptEncryption: false
         # Live Activities are the entire product. Goes in the APP plist;
         # the widget extension needs no Live Activity key.
-        # FrequentUpdates is deliberately omitted: countdowns render
-        # client-side via Text(timerInterval:) and need no update stream.
         NSSupportsLiveActivities: true
-        # One-shot fix for the parking pin; never tracks continuously.
+        # Live scores push often (a goal, the minute ticking). Without this key
+        # iOS holds the activity to the STANDARD push budget and, once spent,
+        # throttles updates — drawing its own spinner over the changing score
+        # instead of applying it. The key raises the budget for frequent remote
+        # updates; we still push frugally (event-driven, see poller.ts) to stay
+        # well inside it.
+        NSSupportsLiveActivitiesFrequentUpdates: true
+        # A one-shot fix for the parking pin — where you left it.
         NSLocationWhenInUseUsageDescription: >-
-          Cling uses your location once to remember where you parked.
-        # Optional photo on a parking pin.
+          Cling uses your location to remember where you parked.
+        # An optional photo on a parking pin.
         NSCameraUsageDescription: >-
-          Cling can attach a photo of your parking spot to the pin.
+          Cling uses the camera to attach a photo to a pin.
         NSPhotoLibraryUsageDescription: >-
           Cling can attach a photo from your library to a pin.
         # Deep links: cling://pin/<uuid>, cling://activate/<uuid>. Used by
@@ -107,10 +116,13 @@ targets:
         com.apple.security.application-groups:
           - group.ltd.anti.cling
         # Required to mint ActivityKit push tokens (push-to-start + per-activity
-        # update tokens). TestFlight + App Store are both distribution builds and
-        # use the PRODUCTION APNs environment; "development" only matches Xcode-run
-        # dev builds. The provisioning profile must carry Push Notifications.
-        aps-environment: production
+        # update tokens). The value must match the SIGNING environment: a
+        # `make device` build is Apple-Development-signed, so "development" (→
+        # sandbox push tokens, server pushes api.sandbox.push.apple.com). Flip to
+        # "production" before a TestFlight / App Store upload (distribution
+        # signing) and point the Worker's APNS_HOST at api.push.apple.com.
+        # The provisioning profile must carry Push Notifications.
+        aps-environment: development
     dependencies:
       - package: iUX-ios
         product: iUXiOS
@@ -133,13 +145,14 @@ targets:
       - Sources/ClingWidgets
       # Same shared code, compiled into the extension too.
       - Sources/ClingKit
+      - Resources/Flags.xcassets
       - Resources/Privacy/Widgets/PrivacyInfo.xcprivacy
     info:
       path: Resources/ClingWidgets-Info.plist
       properties:
         CFBundleDisplayName: Cling
         CFBundleShortVersionString: "1.0"
-        CFBundleVersion: "2"
+        CFBundleVersion: "12"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     entitlements:
@@ -164,13 +177,14 @@ targets:
     sources:
       - Sources/ClingShare
       - Sources/ClingKit
+      - Resources/Flags.xcassets
       - Resources/Privacy/Share/PrivacyInfo.xcprivacy
     info:
       path: Resources/ClingShare-Info.plist
       properties:
         CFBundleDisplayName: Cling
         CFBundleShortVersionString: "1.0"
-        CFBundleVersion: "2"
+        CFBundleVersion: "12"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.share-services
           # Marked @objc(ShareViewController) so the bare name resolves.

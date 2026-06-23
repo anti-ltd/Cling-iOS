@@ -12,4 +12,19 @@ public enum PinTypeID: String, Codable, Sendable, Hashable, CaseIterable {
     /// A content-free pin that exists only to dress the Dynamic Island — a
     /// glyph in the house style, with an optional short caption.
     case decor
+    /// A live football match — two teams, score, and minute — kept current in
+    /// the Dynamic Island by server-pushed Live Activity updates.
+    case match
+    /// A live UFC event — follows the card's current bout (fighters, round,
+    /// clock, result), kept current by server-pushed Live Activity updates.
+    case fight
+    /// A live team game — two teams, score, and period/clock — covering the US
+    /// leagues (NBA/NFL/NHL/MLB) off ESPN's uniform scoreboard. Kept current by
+    /// server-pushed Live Activity updates.
+    case game
+    /// A tracked market quote — one stock or crypto symbol with its live price,
+    /// day change and an intraday sparkline. Price comes from a quote API; it
+    /// refreshes via server-pushed Live Activity updates, so a move lands in the
+    /// island with Cling closed.
+    case ticker
 }

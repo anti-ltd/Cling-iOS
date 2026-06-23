@@ -19,9 +19,15 @@ final class AppModel {
     var settings: ClingSettings {
         didSet {
             store.saveSettings(settings)
-            // The global house style changed — re-dress every pin (and push
-            // the new look into anything live) so the change is instant.
-            if settings.globalStyle != oldValue.globalStyle { restyleAllPins() }
+            // The push server reads the commentary auto-expand prefs from the
+            // device's registration, not the pin store — and settings changes
+            // touch neither pins nor tokens, so nothing else re-registers. Sync
+            // explicitly when one of the server-visible prefs changes.
+            if settings.matchCommentaryAlerts != oldValue.matchCommentaryAlerts
+                || settings.matchCommentaryAlertSound != oldValue.matchCommentaryAlertSound
+                || settings.matchPlayByPlay != oldValue.matchPlayByPlay {
+                matchPush.sync()
+            }
         }
     }
 
@@ -40,31 +46,50 @@ final class AppModel {
     /// Collects APNs tokens so a server can push pins in (Tier 2 background
     /// pinning). Held for the app's lifetime.
     private let pushRegistrar = PushToStartRegistrar()
+    /// Uploads pinned-match subscriptions so the server can push live scores
+    /// while Cling is closed (Phase 3 of the World Cup feature).
+    private let matchPush = MatchPushUploader()
     /// Held for the app's lifetime; fires when another process (the share
     /// extension) writes pins.
     private var pinsToken: AnyObject?
 
     init() {
-        settings = store.loadSettings()
-        pins = coordinator.reconcile(store.loadPins())
+        var loadedSettings = store.loadSettings()
+        if loadedSettings.globalStyle != .default {
+            let legacyStyle = loadedSettings.globalStyle
+            loadedSettings.foldGlobalStyleIntoDefaults()
+            settings = loadedSettings
+            store.saveSettings(loadedSettings)
+            var loadedPins = coordinator.reconcile(store.loadPins())
+            for i in loadedPins.indices {
+                loadedPins[i].appearance = legacyStyle.apply(to: loadedPins[i].appearance)
+            }
+            pins = loadedPins
+            store.savePins(loadedPins, notify: false)
+        } else {
+            settings = loadedSettings
+            pins = coordinator.reconcile(store.loadPins())
+        }
         persist()
         pinsToken = store.observePins { [weak self] in
             Task { @MainActor in self?.reloadPins() }
         }
-        coordinator.watchActivityStates { [weak self] pinID, status in
-            self?.applyActivityState(pinID: pinID, status: status)
+        coordinator.watchRoster { [weak self] status in
+            self?.applyRosterState(status)
         }
         renewals.registerCategory()
         notificationRouter.onRenew = { [weak self] pinID in
             Task { await self?.activate(pinID: pinID) }
         }
         UNUserNotificationCenter.current().delegate = notificationRouter
-        // Start collecting push tokens. The upload sink is left unset until the
-        // server exists; tokens persist locally meanwhile (see PushTokenStore).
+        // Start collecting push tokens and upload match subscriptions whenever a
+        // token lands (the roster activity's update token arrives here).
+        pushRegistrar.onTokensChanged = { [weak self] _ in
+            self?.matchPush.sync()
+        }
         pushRegistrar.start()
         reapOrphanedPhotos()
-        sweepPendingPins()
-        renewExpiringPins()
+        resyncRoster()
     }
 
     /// Re-read the shared store — after a Darwin change notification or a
@@ -74,49 +99,61 @@ final class AppModel {
         persist()
     }
 
-    /// Activate everything still waiting for the app (share-extension pins,
-    /// failed earlier starts). Called on init and every foreground.
-    func sweepPendingPins() {
-        for pin in pins where pin.status == .pending {
-            Task { await activate(pinID: pin.id) }
-        }
+    /// Bring the roster activity in line after a foreground: pull any store
+    /// changes the share extension made, then rebuild the activity — restarting
+    /// it (resetting the 8 h ceiling) if anything's close to going stale. Most
+    /// renewals happen here, invisibly; the notification only fires for pins the
+    /// user never came back for.
+    func foregroundSync() {
+        reloadPins()
+        resyncRoster(restart: coordinator.rosterNeedsRenewal(pins))
     }
 
-    /// Renew anything close to its stale date while we're conveniently in the
-    /// foreground — most renewals happen here, invisibly, and the notification
-    /// only fires for pins the user never came back for.
-    func renewExpiringPins() {
-        for pin in coordinator.pinsDueForRenewal(pins) {
-            Task { await activate(pinID: pin.id) }
-        }
+    /// Rebuild the single roster activity from the current pin set and persist
+    /// the outcome. `restart` resets the activity's ceiling (renewal).
+    func resyncRoster(restart: Bool = false) {
+        Task { await syncRosterNow(restart: restart) }
     }
 
-    /// Start (or renew) the pin's Live Activity and persist the outcome.
-    func activate(pinID: UUID) async {
-        guard let pin = pin(id: pinID) else { return }
-        let updated = await coordinator.activate(pin)
-        applyWithoutSideEffects(updated)
-        renewals.cancelRenewal(for: updated.id)
-        if updated.status == .live, settings.renewalRemindersEnabled {
-            renewals.scheduleRenewal(for: updated)
-        }
+    private func syncRosterNow(restart: Bool) async {
+        let updated = await coordinator.syncRoster(pins, restart: restart)
+        apply(roster: updated)
     }
 
-    /// The coordinator observed the system changing an activity's state.
-    private func applyActivityState(pinID: UUID, status: PinStatus) {
-        guard var pin = pin(id: pinID) else { return }
-        guard pin.status != status else { return }
-        pin.status = status
-        if status != .live { pin.activityID = nil }
-        applyWithoutSideEffects(pin)
-    }
-
-    /// Store a mutated pin without triggering activity side effects (the
-    /// mutation came FROM the activity layer).
-    private func applyWithoutSideEffects(_ pin: Pin) {
-        guard let i = pins.firstIndex(where: { $0.id == pin.id }) else { return }
-        pins[i] = pin
+    /// Adopt the coordinator's reconciled pin set and (re)arm the per-pin
+    /// renewal nudges so a pin the user never returns for still warns.
+    private func apply(roster updated: [Pin]) {
+        pins = updated
         persist()
+        for pin in pins {
+            renewals.cancelRenewal(for: pin.id)
+            if pin.status == .live, settings.renewalRemindersEnabled {
+                renewals.scheduleRenewal(for: pin)
+            }
+        }
+    }
+
+    /// A specific pin asked to be (re)pinned — a renewal tap or an `activate`
+    /// deep link. Un-end it if needed and restart the roster so its ceiling
+    /// resets.
+    func activate(pinID: UUID) async {
+        if let i = pins.firstIndex(where: { $0.id == pinID }), pins[i].status == .ended {
+            pins[i].status = .pending
+        }
+        await syncRosterNow(restart: true)
+    }
+
+    /// The coordinator observed the system aging out or dismissing the roster
+    /// activity — reflect that on every pin that thought it was live.
+    private func applyRosterState(_ status: PinStatus) {
+        guard status != .live else { return }
+        var changed = false
+        for i in pins.indices where pins[i].status == .live {
+            pins[i].status = status
+            pins[i].activityID = nil
+            changed = true
+        }
+        if changed { persist() }
     }
 
     // MARK: - Pin CRUD
@@ -124,7 +161,10 @@ final class AppModel {
     /// Pins visible in the main list (everything not fully ended).
     var activePins: [Pin] {
         pins.filter { $0.status != .ended }
-            .sorted { $0.createdAt > $1.createdAt }
+            .sorted {
+                ($0.payload.scheduledStart ?? $0.createdAt)
+                    < ($1.payload.scheduledStart ?? $1.createdAt)
+            }
     }
 
     // MARK: - The app dresses itself in its pins
@@ -169,8 +209,183 @@ final class AppModel {
         )
         pins.append(pin)
         persist()
-        Task { await activate(pinID: pin.id) }
+        resyncRoster()
         return pin
+    }
+
+    // MARK: - Live sports pins (World Cup score, UFC card)
+
+    /// Pin a match from the feed, or surface the one already pinned for it —
+    /// the same fixture shouldn't take two slots in the island.
+    @discardableResult
+    func pinMatch(_ match: MatchPayload) -> Pin {
+        if let id = match.sourceID,
+           let existing = matchPin(forSource: id) {
+            return existing
+        }
+        let pin = createPin(payload: .match(match))
+        // The update token may already be parked; sync now so the server learns
+        // about it without waiting for a token rotation.
+        matchPush.sync()
+        return pin
+    }
+
+    /// Pin a UFC card from the feed, or surface the one already pinned.
+    @discardableResult
+    func pinFight(_ fight: FightPayload) -> Pin {
+        if let id = fight.sourceID, let existing = fightPin(forSource: id) {
+            return existing
+        }
+        let pin = createPin(payload: .fight(fight))
+        matchPush.sync()
+        return pin
+    }
+
+    /// Pin a team game from the feed, or surface the one already pinned. Dresses
+    /// the pin with the league's own glyph (basketball / puck / …).
+    @discardableResult
+    func pinGame(_ game: TeamGamePayload) -> Pin {
+        if let id = game.sourceID, let existing = gamePin(forSource: id) {
+            return existing
+        }
+        var appearance = settings.defaultAppearance(for: .game)
+        if let league = SportLeague.allCases.first(where: { $0.path == game.league }) {
+            appearance.symbolName = league.systemImage
+        }
+        let pin = createPin(payload: .game(game), appearance: appearance)
+        matchPush.sync()
+        return pin
+    }
+
+    private func matchPin(forSource id: String) -> Pin? {
+        pins.first {
+            if case .match(let m) = $0.payload { return m.sourceID == id }
+            return false
+        }
+    }
+    private func fightPin(forSource id: String) -> Pin? {
+        pins.first {
+            if case .fight(let f) = $0.payload { return f.sourceID == id }
+            return false
+        }
+    }
+    private func gamePin(forSource id: String) -> Pin? {
+        pins.first {
+            if case .game(let g) = $0.payload { return g.sourceID == id }
+            return false
+        }
+    }
+
+    /// While Cling is foreground, pull fresh state for every pinned live-sport
+    /// pin and re-push the ones that changed. The open-app path; the push server
+    /// carries the island when Cling is closed. One fetch per sport that's
+    /// actually pinned; re-pushes only on a real change, to spare the budget.
+    func refreshLiveSports() async {
+        // Apply every score change to the pin set first, then rebuild the roster
+        // activity once — one content update carries all of them, not one per pin.
+        let matchesChanged = await refreshLiveMatches()
+        let fightsChanged = await refreshLiveFights()
+        let gamesChanged = await refreshLiveGames()
+        guard matchesChanged || fightsChanged || gamesChanged else { return }
+        persist()
+        await syncRosterNow(restart: false)
+    }
+
+    @discardableResult
+    private func refreshLiveMatches() async -> Bool {
+        let tracked: [(UUID, MatchPayload)] = pins.compactMap { pin in
+            guard case .match(let m) = pin.payload, m.sourceID != nil,
+                  m.status != .finished else { return nil }
+            return (pin.id, m)
+        }
+        guard !tracked.isEmpty, let feed = try? await MatchFeed.fetch() else { return false }
+        let byID = Dictionary(feed.compactMap { p in p.sourceID.map { ($0, p) } },
+                              uniquingKeysWith: { a, _ in a })
+        var changedAny = false
+        for (pinID, old) in tracked {
+            guard let id = old.sourceID, let fresh = byID[id] else { continue }
+            let changed = fresh.homeScore != old.homeScore
+                || fresh.awayScore != old.awayScore
+                || fresh.status != old.status
+                || fresh.minute != old.minute
+            guard changed, let i = pins.firstIndex(where: { $0.id == pinID }) else { continue }
+            pins[i].payload = .match(old.updatingScore(
+                homeScore: fresh.homeScore, awayScore: fresh.awayScore,
+                minute: fresh.minute, status: fresh.status))
+            changedAny = true
+        }
+        return changedAny
+    }
+
+    @discardableResult
+    private func refreshLiveFights() async -> Bool {
+        let tracked: [(UUID, FightPayload)] = pins.compactMap { pin in
+            guard case .fight(let f) = pin.payload, f.sourceID != nil,
+                  f.status != .finished else { return nil }
+            return (pin.id, f)
+        }
+        guard !tracked.isEmpty, let feed = try? await FightFeed.fetch() else { return false }
+        let byID = Dictionary(feed.compactMap { p in p.sourceID.map { ($0, p) } },
+                              uniquingKeysWith: { a, _ in a })
+        var changedAny = false
+        for (pinID, old) in tracked {
+            guard let id = old.sourceID, let fresh = byID[id] else { continue }
+            let changed = fresh.redName != old.redName || fresh.blueName != old.blueName
+                || fresh.round != old.round || fresh.clock != old.clock
+                || fresh.status != old.status || fresh.winner != old.winner
+                || fresh.boutName != old.boutName
+            guard changed, let i = pins.firstIndex(where: { $0.id == pinID }) else { continue }
+            pins[i].payload = .fight(old.updatingBout(
+                redName: fresh.redName, blueName: fresh.blueName,
+                round: fresh.round, clock: fresh.clock, boutName: fresh.boutName,
+                status: fresh.status, winner: fresh.winner, method: fresh.method))
+            changedAny = true
+        }
+        return changedAny
+    }
+
+    @discardableResult
+    private func refreshLiveGames() async -> Bool {
+        let tracked: [(UUID, TeamGamePayload)] = pins.compactMap { pin in
+            guard case .game(let g) = pin.payload, g.sourceID != nil,
+                  g.status != .finished else { return nil }
+            return (pin.id, g)
+        }
+        guard !tracked.isEmpty else { return false }
+        // Games span several leagues — one fetch per distinct league pinned.
+        var byID: [String: TeamGamePayload] = [:]
+        for league in Set(tracked.map(\.1.league)) {
+            guard let feed = try? await GameFeed.fetch(leaguePath: league) else { continue }
+            for p in feed { if let id = p.sourceID { byID[id] = p } }
+        }
+        guard !byID.isEmpty else { return false }
+        var changedAny = false
+        for (pinID, old) in tracked {
+            guard let id = old.sourceID, let fresh = byID[id] else { continue }
+            let changed = fresh.homeScore != old.homeScore || fresh.awayScore != old.awayScore
+                || fresh.period != old.period || fresh.clock != old.clock
+                || fresh.situation != old.situation || fresh.status != old.status
+            guard changed, let i = pins.firstIndex(where: { $0.id == pinID }) else { continue }
+            pins[i].payload = .game(old.updatingState(
+                homeScore: fresh.homeScore, awayScore: fresh.awayScore,
+                period: fresh.period, clock: fresh.clock,
+                situation: fresh.situation, status: fresh.status))
+            changedAny = true
+        }
+        return changedAny
+    }
+
+    /// True while any pinned live-sport pin is still in play — the poll loop
+    /// runs only when it's worth a network call.
+    var hasLiveSportPins: Bool {
+        pins.contains { pin in
+            switch pin.payload {
+            case .match(let m): return m.status != .finished
+            case .fight(let f): return f.status != .finished
+            case .game(let g):  return g.status != .finished
+            default:            return false
+            }
+        }
     }
 
     /// Apply a content/appearance edit and push it into the live activity.
@@ -178,26 +393,13 @@ final class AppModel {
     /// drift the shared surface/type/density/border.
     func update(_ pin: Pin) {
         guard let i = pins.firstIndex(where: { $0.id == pin.id }) else { return }
-        var styled = pin
-        styled.appearance = settings.styled(pin.appearance)
-        pins[i] = styled
+        pins[i] = pin
         persist()
-        if styled.status == .live {
-            Task { await coordinator.refresh(styled) }
-        }
-    }
-
-    /// Re-apply the global house style to every pin and re-push the live ones.
-    /// Called when `settings.globalStyle` changes — one knob re-dresses the
-    /// whole board (and the Dynamic Island) at once.
-    private func restyleAllPins() {
-        for i in pins.indices {
-            pins[i].appearance = settings.styled(pins[i].appearance)
-        }
-        persist()
-        for pin in pins where pin.status == .live {
-            Task { await coordinator.refresh(pin) }
-        }
+        resyncRoster()
+        // Re-register so server pushes carry the latest appearance (accent,
+        // showsExpiry, …) instead of the template from when the pin was first
+        // synced.
+        matchPush.sync()
     }
 
     func delete(_ pin: Pin) {
@@ -207,7 +409,12 @@ final class AppModel {
         pins.removeAll { $0.id == pin.id }
         persist()
         renewals.cancelRenewal(for: pin.id)
-        Task { _ = await coordinator.end(pin, dismissal: .immediate) }
+        // Rebuild the roster without this pin (and end the activity outright if
+        // it was the last one).
+        resyncRoster()
+        // Tell the server the subscription set changed — otherwise it keeps
+        // pushing updates that revive the island.
+        matchPush.sync()
     }
 
     func pin(id: UUID) -> Pin? {
@@ -240,7 +447,7 @@ final class AppModel {
         switch payload {
         case .parking(let parking): parking.photoFilename
         case .note(let note):       note.photoFilename
-        case .timer, .decor:        nil
+        case .timer, .decor, .match, .fight, .game, .ticker: nil
         }
     }
 }
